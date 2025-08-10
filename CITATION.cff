@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+type: software
+title: "pH7Console: An AI-Powered Terminal that Respects Your Privacy"
+abstract: "pH7Console is a privacy-focused, ML-first terminal that brings the power of local AI to your command line experience. Built with Tauri for maximum performance and security, it features natural language command processing, smart error resolution, and context-aware suggestions while ensuring all AI processing happens locally without data collection."
+authors:
+  - family-names: "Soria"
+    given-names: "Pierre-Henry"
+    orcid: "https://orcid.org/0000-0000-0000-0000"
+    website: "https://ph7.me"
+    email: "hi+github@ph7.me"
+repository-code: "https://github.com/pH-7/pH7Console"
+url: "https://github.com/pH-7/pH7Console"
+version: "1.0.0"
+date-released: "2025-08-10"
+license: MIT
+keywords:
+  - "artificial intelligence"
+  - "terminal"
+  - "privacy"
+  - "local AI"
+  - "command line"
+  - "machine learning"
+  - "tauri"
+  - "rust"
+  - "react"
+  - "natural language processing"
+  - "developer tools"
+  - "offline AI"
+preferred-citation:
+  type: software
+  title: "pH7Console: An AI-Powered Terminal that Respects Your Privacy"
+  authors:
+    - family-names: "Soria"
+      given-names: "Pierre-Henry"
+  year: 2025
+  url: "https://github.com/pH-7/pH7Console"
+  version: "1.0.0"
