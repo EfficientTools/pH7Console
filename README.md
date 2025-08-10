@@ -191,12 +191,381 @@ Error analysis → CodeQwen (specialized)
 - **Thermal throttling**: Reduces inference rate if system gets hot
 - **Sleep mode**: Models unload during inactivity
 
-### Tech Stack
-- **Backend**: Rust + Tauri 2.0
-- **AI/ML**: Candle (Rust-native ML framework)
-- **Frontend**: React + TypeScript + Tailwind CSS
-- **Terminal**: Portable PTY for cross-platform terminal emulation
-- **State Management**: Zustand for reactive state
+## 📦 Building & Distribution
+
+### Building Executable Binaries
+
+#### macOS
+
+**Development Build** (faster, includes debugging symbols):
+```bash
+npm run tauri build -- --debug
+```
+
+**Production Build** (optimized, smaller size):
+```bash
+npm run tauri build
+```
+
+**Universal Binary** (Intel + Apple Silicon):
+```bash
+npm run tauri build -- --target universal-apple-darwin
+```
+
+**Platform-specific builds**:
+```bash
+# Intel Macs only
+npm run tauri build -- --target x86_64-apple-darwin
+
+# Apple Silicon only (M1/M2/M3)
+npm run tauri build -- --target aarch64-apple-darwin
+```
+
+**Build outputs** (located in `src-tauri/target/release/bundle/`):
+- `macos/pH7Console.app` - Application bundle
+- `dmg/pH7Console_1.0.0_universal.dmg` - Installer
+- `../release/ph7console` - Raw executable
+
+#### Windows
+
+**Prerequisites**:
+```bash
+# Install Windows target (from macOS/Linux)
+rustup target add x86_64-pc-windows-msvc
+
+# Install Windows-specific dependencies
+npm install --save-dev @tauri-apps/cli@latest
+```
+
+**Cross-compilation from macOS**:
+```bash
+# Build for Windows from macOS
+npm run tauri build -- --target x86_64-pc-windows-msvc
+```
+
+**Native Windows build**:
+```bash
+# On Windows machine
+npm run tauri build
+```
+
+**Build outputs** (located in `src-tauri/target/release/bundle/`):
+- `msi/pH7Console_1.0.0_x64_en-US.msi` - Windows installer
+- `nsis/pH7Console_1.0.0_x64-setup.exe` - NSIS installer
+- `../release/pH7Console.exe` - Raw executable
+
+#### Linux
+
+**Ubuntu/Debian (.deb)**:
+```bash
+npm run tauri build -- --target x86_64-unknown-linux-gnu
+```
+
+**AppImage (universal Linux)**:
+```bash
+npm run tauri build -- --bundles appimage
+```
+
+**RPM (Red Hat/Fedora)**:
+```bash
+npm run tauri build -- --bundles rpm
+```
+
+### Code Signing & Notarization
+
+#### macOS Code Signing
+
+**1. Get Apple Developer Certificate**:
+- Join Apple Developer Program ($99/year)
+- Create Developer ID Application certificate in Xcode
+
+**2. Configure signing in `tauri.conf.json`**:
+```json
+{
+  "tauri": {
+    "bundle": {
+      "macOS": {
+        "signingIdentity": "Developer ID Application: Your Name (TEAM_ID)",
+        "hardenedRuntime": true,
+        "entitlements": "entitlements.plist"
+      }
+    }
+  }
+}
+```
+
+**3. Create `entitlements.plist`**:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.cs.allow-jit</key>
+    <true/>
+    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    <true/>
+    <key>com.apple.security.cs.disable-library-validation</key>
+    <true/>
+</dict>
+</plist>
+```
+
+**4. Build with signing**:
+```bash
+# Set environment variables
+export APPLE_SIGNING_IDENTITY="Developer ID Application: Your Name (TEAM_ID)"
+export APPLE_ID="your-apple-id@email.com"
+export APPLE_PASSWORD="app-specific-password"
+
+# Build and sign
+npm run tauri build
+```
+
+**5. Notarize for macOS Gatekeeper**:
+```bash
+# Notarize the .dmg
+xcrun notarytool submit "src-tauri/target/release/bundle/dmg/pH7Console_1.0.0_universal.dmg" \
+  --apple-id "your-apple-id@email.com" \
+  --password "app-specific-password" \
+  --team-id "YOUR_TEAM_ID" \
+  --wait
+
+# Staple the ticket
+xcrun stapler staple "src-tauri/target/release/bundle/dmg/pH7Console_1.0.0_universal.dmg"
+```
+
+#### Windows Code Signing
+
+**1. Get Code Signing Certificate**:
+- Purchase from CA (DigiCert, Sectigo, etc.)
+- Or use self-signed for testing
+
+**2. Configure in `tauri.conf.json`**:
+```json
+{
+  "tauri": {
+    "bundle": {
+      "windows": {
+        "certificateThumbprint": "YOUR_CERT_THUMBPRINT",
+        "digestAlgorithm": "sha256",
+        "timestampUrl": "http://timestamp.digicert.com"
+      }
+    }
+  }
+}
+```
+
+**3. Build with signing**:
+```bash
+npm run tauri build
+```
+
+### App Store Distribution
+
+#### Mac App Store
+
+**1. Prepare for App Store**:
+
+Update `tauri.conf.json` for App Store:
+```json
+{
+  "tauri": {
+    "bundle": {
+      "macOS": {
+        "signingIdentity": "3rd Party Mac Developer Application: Your Name (TEAM_ID)",
+        "providerShortName": "YOUR_PROVIDER_NAME",
+        "entitlements": "entitlements.mas.plist",
+        "exceptionDomain": "localhost"
+      }
+    }
+  }
+}
+```
+
+**2. Create App Store entitlements (`entitlements.mas.plist`)**:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.network.client</key>
+    <true/>
+    <key>com.apple.security.files.user-selected.read-write</key>
+    <true/>
+</dict>
+</plist>
+```
+
+**3. Build for App Store**:
+```bash
+npm run tauri build -- --target universal-apple-darwin
+```
+
+**4. Create installer package**:
+```bash
+productbuild --component "src-tauri/target/release/bundle/macos/pH7Console.app" \
+  /Applications \
+  --sign "3rd Party Mac Developer Installer: Your Name (TEAM_ID)" \
+  pH7Console-mas.pkg
+```
+
+**5. Submit to App Store**:
+```bash
+xcrun altool --upload-app \
+  --type osx \
+  --file "pH7Console-mas.pkg" \
+  --username "your-apple-id@email.com" \
+  --password "app-specific-password"
+```
+
+#### Microsoft Store
+
+**1. Prepare Windows package**:
+
+Install Windows App SDK:
+```bash
+# Install MSIX packaging tools
+winget install Microsoft.WindowsSDK
+```
+
+**2. Create `appxmanifest.xml`**:
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10">
+  <Identity Name="YourCompany.pH7Console" 
+            Publisher="CN=Your Name" 
+            Version="1.0.0.0" />
+  <Properties>
+    <DisplayName>pH7Console</DisplayName>
+    <PublisherDisplayName>Your Name</PublisherDisplayName>
+    <Description>AI-Powered Terminal that Respects Your Privacy</Description>
+  </Properties>
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" 
+                        MinVersion="10.0.17763.0" 
+                        MaxVersionTested="10.0.22000.0" />
+  </Dependencies>
+  <Applications>
+    <Application Id="pH7Console" Executable="pH7Console.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="pH7Console" 
+                          Description="AI-Powered Terminal" 
+                          BackgroundColor="#1a1a1a" 
+                          Square150x150Logo="assets/logo150.png" 
+                          Square44x44Logo="assets/logo44.png" />
+    </Application>
+  </Applications>
+</Package>
+```
+
+**3. Package for Microsoft Store**:
+```bash
+# Create MSIX package
+makeappx pack /d "path/to/app/folder" /p "pH7Console.msix"
+
+# Sign the package
+signtool sign /fd SHA256 /a "pH7Console.msix"
+```
+
+**4. Submit to Microsoft Store**:
+- Upload via Partner Center
+- Complete store listing
+- Submit for certification
+
+### Automated CI/CD Pipeline
+
+**GitHub Actions** (`.github/workflows/release.yml`):
+```yaml
+name: Release
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  release:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, ubuntu-20.04, windows-latest]
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-20.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev librsvg2-dev
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Node.js setup
+        uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'pH7Console v__VERSION__'
+          releaseBody: 'See the assets to download and install this version.'
+          releaseDraft: true
+          prerelease: false
+```
+
+### Distribution Checklist
+
+**Before Release**:
+- [ ] Update version in `tauri.conf.json` and `package.json`
+- [ ] Test on all target platforms
+- [ ] Verify code signing works
+- [ ] Test installation/uninstallation
+- [ ] Update release notes
+
+**macOS**:
+- [ ] Build universal binary
+- [ ] Code sign with Developer ID
+- [ ] Notarize with Apple
+- [ ] Test Gatekeeper compatibility
+- [ ] Create DMG installer
+
+**Windows**:
+- [ ] Build x64 executable
+- [ ] Code sign with valid certificate
+- [ ] Create MSI/NSIS installer
+- [ ] Test Windows Defender compatibility
+
+**Linux**:
+- [ ] Build .deb package
+- [ ] Create AppImage
+- [ ] Test on Ubuntu/Fedora
+- [ ] Verify desktop integration
+
+**App Stores**:
+- [ ] Prepare store assets (icons, screenshots)
+- [ ] Write store descriptions
+- [ ] Set pricing/availability
+- [ ] Submit for review
+- [ ] Monitor review status
+
+This comprehensive build and distribution setup ensures your pH7Console can reach users across all major platforms! 🚀
 
 ## Get Started
 
@@ -658,4 +1027,4 @@ Feel free to connect, and reach me at **[my LinkedIn Profile](https://www.linked
 
 ## License
 
-Distributed under [MIT](https://opensource.org/license/mit) license 🎉 Wish you happy, happy coding! 🤠
+**pH7Console** is generously distributed under [MIT](LICENSE.md) license 🎉 Wish you happy, happy productive time! 🤠
