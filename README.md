@@ -1,72 +1,100 @@
-# pH7Console - ML-First Terminal
-
-> **🚀 An intelligent terminal with local AI capabilities built with Tauri**
+# pH7Console: An AI-Powered Terminal that Respects Your Privacy
 
 pH7Console is a privacy-focused, ML-first terminal that brings the power of local AI to your command line experience. Built with Tauri for maximum performance and security.
 
-## ✨ Features
+At the moment, it includes the following AI capabilities 🚀
+
+- **Local LLM Processing** - Phi-3 Mini, Llama 3.2, TinyLlama, CodeQwen
+- **Natural Language Commands** - Convert plain English to shell commands
+- **Smart Error Resolution** - AI-powered troubleshooting and fixes
+- **Context-Aware Suggestions** - Intelligent command completions
+- **Privacy-Preserving Learning** - Adapts to your workflow without data collection
+
+## Key Features
 
 ### 🤖 Local AI Intelligence
 - **Command Prediction** - Smart suggestions based on context and history
-- **Natural Language Processing** - Convert plain English to shell commands
+- **Natural Language Processing** - Convert plain English to shell commands  
 - **Error Analysis & Fixes** - AI-powered error resolution
-- **Output Analysis** - Intelligent parsing and insights from command outputs
 - **Smart Completions** - Context-aware command completions
 
-### 🔒 Privacy-First Architecture
+### 🔒 Privacy-First Architecture  
 - **100% Local Processing** - No data leaves your machine
 - **No Telemetry** - Your commands and data stay private
 - **Encrypted History** - Local command history encryption
-- **Configurable Privacy Levels** - Full control over AI features
 
 ### ⚡ Performance Optimized
 - **Lightweight Models** - Optimized for MacBook Air and similar hardware
 - **Adaptive Loading** - Models load on-demand
-- **Battery Aware** - Adjusts AI intensity based on power state
 - **Multi-Platform** - Native performance on macOS, Windows, Linux
 
 ### 🎯 Productivity Features
 - **Multi-Session Management** - Multiple terminal sessions
-- **Workflow Automation** - Smart command templates
-- **Visual Command Preview** - See what commands will do before execution
+- **Workflow Automation** - Smart command templates  
 - **Session Recording** - Replay and analyze terminal sessions
 
-## 🏗️ Architecture
+### Utility
 
-### Local AI Models (Recommended for MacBook Air)
+- `cargo fmt` (in src-tauri/) - Format Rust code
+- `cargo clippy` (in src-tauri/) - Lint Rust code for common mistakes
+- `npm run lint` - Check TypeScript/React code style
+- `npm run type-check` - Verify TypeScript types
 
-pH7Console uses **Candle**, a Rust-native ML framework (similar to PyTorch but optimized for inference), to run AI models locally with zero privacy concerns.
+## How to Use
 
-#### 🧠 How the Local LLM Works
+### Basic Usage
 
-**Model Architecture**:
-- **Framework**: Candle (Rust's equivalent to PyTorch for inference)
-- **Quantization**: 4-bit and 8-bit quantized models for efficiency
-- **Context Window**: 4K-32K tokens depending on model
-- **Inference**: CPU-optimized with optional GPU acceleration
+1. **Launch the app** - pH7Console opens with a dark terminal interface
+2. **Natural language commands** - Type what you want in plain English:
+   ```
+   "show me all large files" 
+   → AI suggests: find . -type f -size +100M -exec ls -lh {} \;
+   ```
+3. **Smart completions** - Start typing and press Tab for AI suggestions
+4. **Error assistance** - When commands fail, AI automatically suggests fixes
 
-**Supported Models**:
-- **Phi-3 Mini (3.8GB)** - Microsoft's efficient instruction-tuned model
-  - 3.8B parameters, 4-bit quantized
-  - Best balance of capability and performance
-  - Specialized for code and reasoning tasks
+### AI Features
+- **Command Explanation**: Hover over any command for AI explanation
+- **Error Recovery**: Automatic error analysis with suggested fixes  
+- **Context Awareness**: AI understands your project structure
+- **Workflow Learning**: AI learns your patterns and suggests optimized workflows
 
-- **Llama 3.2 1B (1.2GB)** - Meta's ultra-lightweight model
-  - 1B parameters, 8-bit quantized
-  - Fastest inference on MacBook Air
-  - Perfect for basic command suggestions
+## Technical Stack
 
-- **TinyLlama (1.1GB)** - Community's speed-optimized model
-  - 1.1B parameters, highly optimized
-  - Sub-100ms response times
-  - Excellent for real-time completions
+- **Frontend**: React 18 + TypeScript + Tailwind CSS
+- **Backend**: Rust (Tauri 2.0) for native performance  
+- **AI Runtime**: Candle ML framework (Rust-native)
+- **Terminal**: Cross-platform PTY with xterm.js
 
-- **CodeQwen 1.5B (1.5GB)** - Alibaba's code-specialized model
-  - 1.5B parameters, code-focused training
-  - Superior understanding of development workflows
-  - Best for programming-related tasks
+### Local AI Models
 
-#### 🤖 Learning and Adaptation System
+pH7Console runs AI models locally using **Candle** (Rust's ML framework) for zero privacy concerns:
+
+- **Phi-3 Mini (3.8GB)** - Best for command understanding
+- **Llama 3.2 1B (1.2GB)** - Fastest responses on MacBook Air
+- **TinyLlama (1.1GB)** - Minimal resource usage  
+- **CodeQwen (1.5GB)** - Specialized for code tasks
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+
+Please make sure to update tests as appropriate and follow the existing code style.
+
+## Author
+
+**Pierre-Henry Soria**
+
+- 🌐 Website: [ph7.me](https://ph7.me)
+- 🐙 GitHub: [@pH-7](https://github.com/pH-7)  
+- 🐦 Twitter: [@phenrysoria](https://twitter.com/phenrysoria)
+- 📧 Email: hi+github{{AT}}ph7.me
+
+*Passionate about creating developer tools that respect privacy and enhance productivity.*
+
+## License
+
+Distributed under the MIT License. See [LICENSE](LICENSE) for more information.
 
 **Unlike PyTorch training, pH7Console uses smart adaptation**:
 
@@ -173,30 +201,7 @@ Error analysis → CodeQwen (specialized)
 - **Terminal**: Portable PTY for cross-platform terminal emulation
 - **State Management**: Zustand for reactive state
 
-## 🚀 Quick Start
-
-### Prerequisites
-
-#### Required Tools
-- **Rust** (1.70+) - [Install Rust](https://rustup.rs/)
-  ```bash
-  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-  source ~/.cargo/env
-  ```
-- **Node.js** (v18+) - [Install Node.js](https://nodejs.org/)
-  ```bash
-  # Using NVM (recommended)
-  curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.0/install.sh | bash
-  nvm install --lts && nvm use --lts
-  ```
-- **Git** - [Install Git](https://git-scm.com/)
-
-#### System Requirements
-- **RAM**: 4GB minimum, 8GB recommended (for AI models)
-- **Storage**: 5GB free space (for models and dependencies)
-- **OS**: macOS 10.15+, Windows 10+, or Linux (Ubuntu 18.04+)
-
-### Installation
+## Get Started
 
 1. **Clone the repository**
    ```bash
@@ -204,28 +209,36 @@ Error analysis → CodeQwen (specialized)
    cd pH7Console
    ```
 
-2. **Run the setup script** (handles everything automatically)
+2. **Install dependencies** - Run the automated setup script
    ```bash
    chmod +x setup.sh
    ./setup.sh
    ```
 
-   Or **manual installation**:
-   ```bash
-   # Install Node.js dependencies
-   npm install
-   
-   # Install Tauri CLI
-   npm install -g @tauri-apps/cli@next
-   
-   # Verify Rust installation
-   cd src-tauri && cargo check
-   ```
-
-3. **First run** (downloads AI models automatically)
+3. **Start development** - Launch the terminal with AI capabilities
    ```bash
    npm run tauri:dev
    ```
+
+### Other Commands
+
+- `npm run tauri:build` - Build for production (creates native binaries)
+- `npm run tauri:build -- --target universal-apple-darwin` - Build universal macOS binary
+- `npm run tauri:build -- --target x86_64-pc-windows-msvc` - Build for Windows
+- `npm run test` - Run all tests (Rust backend and TypeScript frontend)
+- `npm run clean` - Clean all build artifacts and reinstall dependencies
+
+## Prerequisites
+
+**System Requirements:**
+- **RAM**: 4GB minimum, 8GB recommended (for AI models)
+- **Storage**: 5GB free space (for models and dependencies)  
+- **OS**: macOS 10.15+, Windows 10+, or Linux (Ubuntu 18.04+)
+
+**Required Tools:**
+- **Rust** (1.70+) - [Install Rust](https://rustup.rs/)
+- **Node.js** (v18+) - [Install Node.js](https://nodejs.org/)
+- **Git** - [Install Git](https://git-scm.com/)
 
 ### 🎮 How to Use
 
@@ -640,23 +653,20 @@ async fn load_custom_model(&mut self) -> Result<(), Error> {
 - Terminal themes are currently limited (more coming soon)
 - Windows: PTY handling has occasional quirks
 
-## 📄 License
+## Author
 
-MIT License - see the [LICENSE](LICENSE) file for details.
+[![Pierre-Henry Soria](https://avatars0.githubusercontent.com/u/1325411?s=200)](https://ph7.me "Pierre-Henry Soria, Software Developer")
 
-## 🙏 Acknowledgments
+Made with ❤️ by **[Pierre-Henry Soria](https://pierrehenry.be)**. A super passionate & enthusiastic Problem-Solver / Senior Software Engineer. Also a true cheese 🧀, ristretto ☕️, and dark chocolate lover! 😋
 
-- **Candle** - Rust ML framework
-- **Tauri** - Cross-platform app framework
-- **Hugging Face** - Pre-trained models
-- **The Rust Community** - For amazing crates and support
+[![@phenrysay](https://img.shields.io/badge/x-000000?style=for-the-badge&logo=x)](https://x.com/phenrysay "Follow Me on X")  [![pH-7](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/pH-7 "My GitHub")  [![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?style=for-the-badge&logo=linkedin&logoColor=white)](https://www.linkedin.com/in/ph7enry/ "LinkedIn Profile")
 
-## 📞 Support
+# About the Project
 
-- 💬 **Discussions**: [GitHub Discussions](https://github.com/EfficientTools/pH7Console/discussions)
-- 🐛 **Issues**: [GitHub Issues](https://github.com/EfficientTools/pH7Console/issues)
-- 📧 **Email**: support@efficienttools.dev
+**pH7Console** is part of the challenge `#Privacy-First-AI-Tools`, a collection of **innovative AI projects** focused on bringing artificial intelligence capabilities to developers while maintaining complete privacy and data sovereignty. Built with a commitment to local processing and zero telemetry. Hope you enjoy 🤗
 
----
+Feel free to connect, and reach me at **[my LinkedIn Profile](https://www.linkedin.com/in/ph7enry/)** 🚀
 
-**Built with ❤️ for developers who value privacy and productivity**
+## License
+
+Distributed under [MIT](https://opensource.org/license/mit) license 🎉 Wish you happy, happy coding! 🤠
