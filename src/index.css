@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-terminal-bg text-terminal-text font-mono;
+  }
+}
+
+@layer components {
+  .terminal-window {
+    @apply bg-terminal-surface border border-terminal-border rounded-lg shadow-2xl;
+  }
+  
+  .terminal-input {
+    @apply bg-transparent border-none outline-none text-terminal-text font-mono;
+  }
+  
+  .ai-suggestion {
+    @apply bg-ai-primary/10 border border-ai-primary/30 rounded-md px-3 py-2 text-sm;
+  }
+  
+  .command-output {
+    @apply text-terminal-muted font-mono text-sm leading-relaxed;
+  }
+  
+  .ai-badge {
+    @apply bg-gradient-to-r from-ai-primary to-ai-secondary text-white px-2 py-1 rounded-full text-xs font-medium;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  @apply bg-terminal-bg;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-terminal-border rounded;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-terminal-muted;
+}
+
+/* Selection colors */
+::selection {
+  @apply bg-ai-primary/30;
+}
+
+/* Focus states */
+.focus-ring {
+  @apply focus:outline-none focus:ring-2 focus:ring-ai-primary focus:ring-offset-2 focus:ring-offset-terminal-bg;
+}

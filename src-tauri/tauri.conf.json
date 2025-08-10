@@ -1,0 +1,79 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/schema.json",
+  "productName": "pH7Console",
+  "version": "0.1.0",
+  "identifier": "com.efficienttools.ph7console",
+  "build": {
+    "beforeBuildCommand": "npm run build",
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "pH7Console - ML-First Terminal",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600,
+        "fullscreen": false,
+        "resizable": true,
+        "maximizable": true,
+        "minimizable": true,
+        "closable": true,
+        "decorations": true,
+        "transparent": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "bundle": {
+      "active": true,
+      "category": "DeveloperTool",
+      "copyright": "Copyright © 2025 EfficientTools",
+      "deb": {
+        "depends": []
+      },
+      "externalBin": [],
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ],
+      "identifier": "com.efficienttools.ph7console",
+      "longDescription": "An intelligent, ML-first terminal with local AI capabilities",
+      "macOS": {
+        "entitlements": null,
+        "exceptionDomain": "",
+        "frameworks": [],
+        "providerShortName": null,
+        "signingIdentity": null
+      },
+      "resources": ["models/*"],
+      "shortDescription": "ML-First Terminal",
+      "targets": "all",
+      "windows": {
+        "certificateThumbprint": null,
+        "digestAlgorithm": "sha256",
+        "timestampUrl": ""
+      }
+    }
+  },
+  "plugins": {
+    "shell": {
+      "open": true
+    },
+    "fs": {
+      "all": true,
+      "scope": ["$HOME/**", "$APPDATA/**", "$LOCALDATA/**"]
+    },
+    "process": {
+      "all": true
+    }
+  }
+}

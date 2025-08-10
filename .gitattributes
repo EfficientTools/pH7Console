@@ -1,0 +1,171 @@
+# pH7Console - Git Attributes Configuration
+
+# === Text Files ===
+* text=auto eol=lf
+
+# === Source Code ===
+*.rs text diff=rust
+*.toml text
+*.ts text
+*.tsx text
+*.js text
+*.jsx text
+*.json text
+*.md text
+*.yml text
+*.yaml text
+
+# === Configuration Files ===
+*.conf text
+*.config text
+*.ini text
+.gitignore text
+.gitattributes text
+.editorconfig text
+
+# === Documentation ===
+*.txt text
+*.rtf text
+README* text
+CHANGELOG* text
+LICENSE* text
+CONTRIBUTING* text
+
+# === Web Assets ===
+*.html text diff=html
+*.css text diff=css
+*.scss text
+*.sass text
+*.less text
+*.svg text
+
+# === Scripts ===
+*.sh text eol=lf
+*.bash text eol=lf
+*.zsh text eol=lf
+*.fish text eol=lf
+*.ps1 text eol=crlf
+
+# === Binary Files ===
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.bmp binary
+*.tiff binary
+*.webp binary
+
+# === Fonts ===
+*.woff binary
+*.woff2 binary
+*.eot binary
+*.ttf binary
+*.otf binary
+
+# === Archives ===
+*.zip binary
+*.tar binary
+*.gz binary
+*.bz2 binary
+*.xz binary
+*.7z binary
+*.rar binary
+
+# === AI Models (Large Binary Files) ===
+*.bin binary filter=lfs diff=lfs merge=lfs
+*.safetensors binary filter=lfs diff=lfs merge=lfs
+*.gguf binary filter=lfs diff=lfs merge=lfs
+*.ggml binary filter=lfs diff=lfs merge=lfs
+*.model binary filter=lfs diff=lfs merge=lfs
+
+# === Application Binaries ===
+*.exe binary
+*.dll binary
+*.so binary
+*.dylib binary
+*.app binary
+*.dmg binary
+*.msi binary
+*.deb binary
+*.rpm binary
+*.AppImage binary
+
+# === Development Database Files ===
+*.db binary
+*.sqlite binary
+*.sqlite3 binary
+
+# === Certificates ===
+*.p12 binary
+*.pfx binary
+*.keystore binary
+
+# === Media Files ===
+*.mp3 binary
+*.mp4 binary
+*.avi binary
+*.mov binary
+*.wmv binary
+*.flv binary
+*.wav binary
+*.ogg binary
+
+# === Special Handling ===
+# Rust - Use rustfmt for formatting
+*.rs filter=rustfmt
+
+# TypeScript/JavaScript - Ensure consistent line endings
+*.ts filter=prettier
+*.tsx filter=prettier
+*.js filter=prettier
+*.jsx filter=prettier
+*.json filter=prettier
+
+# Tauri configuration - Critical for cross-platform builds
+src-tauri/tauri.conf.json text eol=lf
+src-tauri/Cargo.toml text eol=lf
+src-tauri/Cargo.lock text eol=lf
+
+# Package files
+package.json text eol=lf
+package-lock.json text eol=lf linguist-generated=true
+yarn.lock text eol=lf linguist-generated=true
+pnpm-lock.yaml text eol=lf linguist-generated=true
+
+# === Linguist Overrides ===
+# Mark generated files
+/dist/* linguist-generated=true
+/build/* linguist-generated=true
+/target/* linguist-generated=true
+*.generated.* linguist-generated=true
+
+# Language detection overrides
+*.rs linguist-language=Rust
+*.ts linguist-language=TypeScript
+*.tsx linguist-language=TypeScript
+
+# Documentation
+*.md linguist-documentation=true
+docs/* linguist-documentation=true
+
+# === Export Ignore (for git archive) ===
+.gitignore export-ignore
+.gitattributes export-ignore
+.github/ export-ignore
+.vscode/ export-ignore
+*.md export-ignore
+/docs/ export-ignore
+/examples/ export-ignore
+/tests/ export-ignore
+node_modules/ export-ignore
+src-tauri/target/ export-ignore
+
+# === Merge Strategies ===
+# Always use ours for generated files
+package-lock.json merge=ours
+yarn.lock merge=ours
+Cargo.lock merge=ours
+
+# Use union merge for changelog
+CHANGELOG.md merge=union

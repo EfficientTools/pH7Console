@@ -1,0 +1,51 @@
+[package]
+name = "ph7-console"
+version = "0.1.0"
+description = "ML-First Terminal with Local AI"
+authors = ["pH7Console Team"]
+license = "MIT"
+repository = "https://github.com/EfficientTools/pH7Console"
+default-run = "ph7-console"
+edition = "2021"
+rust-version = "1.70"
+
+[build-dependencies]
+tauri-build = { version = "2.0", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+tauri = { version = "2.0", features = [ "protocol-asset", "shell-open"] }
+tauri-plugin-shell = "2.0"
+tauri-plugin-fs = "2.0"
+tauri-plugin-process = "2.0"
+
+# Local AI/ML Dependencies
+candle-core = "0.6"
+candle-nn = "0.6"
+candle-transformers = "0.6"
+tokenizers = "0.19"
+hf-hub = "0.3"
+
+# Terminal/PTY handling
+portable-pty = "0.8"
+tokio = { version = "1.0", features = ["full"] }
+
+# System integration
+sysinfo = "0.30"
+dirs = "5.0"
+uuid = { version = "1.0", features = ["v4"] }
+
+# Async utilities
+futures = "0.3"
+async-trait = "0.1"
+
+[features]
+# This feature is used for production builds or when `devPath` points to the filesystem and the built-in dev server is disabled.
+# If you use cargo directly instead of tauri's cli you can use this feature flag to switch between tauri's `dev` and `build` modes.
+# DO NOT REMOVE!!
+custom-protocol = [ "tauri/custom-protocol" ]
+
+[[bin]]
+name = "ph7-console"
+path = "src/main.rs"

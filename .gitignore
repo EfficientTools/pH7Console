@@ -1,0 +1,181 @@
+# pH7Console - Comprehensive .gitignore
+
+# === Tauri/Rust ===
+/src-tauri/target/
+/src-tauri/Cargo.lock
+*.pdb
+
+# === Node.js ===
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.npm
+.yarn/
+.pnpm-debug.log*
+
+# === Build Outputs ===
+/dist/
+/build/
+*.tar.gz
+*.zip
+
+# === IDE & Editors ===
+.vscode/settings.json
+.vscode/launch.json
+.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+
+# === Operating System ===
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+*.tmp
+*.temp
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# === AI Models & Data ===
+/models/
+/cache/
+*.safetensors
+*.bin
+*.gguf
+*.ggml
+/embeddings/
+/vector_store/
+
+# === Logs ===
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+.pnpm-debug.log*
+
+# === Runtime ===
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# === Coverage ===
+lib-cov
+coverage/
+*.lcov
+.nyc_output
+
+# === Environment Variables ===
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# === Package Managers ===
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# === Temporary Files ===
+*.tgz
+*.tar.gz
+.cache/
+.temp/
+.tmp/
+
+# === TypeScript ===
+*.tsbuildinfo
+
+# === Testing ===
+coverage/
+.nyc_output/
+
+# === Tauri Specific ===
+/src-tauri/target/
+/src-tauri/.env
+/src-tauri/WixTools
+
+# === Security ===
+*.key
+*.pem
+*.p12
+*.crt
+*.csr
+secrets.json
+config.local.json
+
+# === Database ===
+*.db
+*.sqlite
+*.sqlite3
+*.db-shm
+*.db-wal
+
+# === Backup Files ===
+*.bak
+*.backup
+*.old
+*.orig
+
+# === AI Training Data ===
+/training_data/
+/datasets/
+*.jsonl
+/user_patterns/
+/command_history.encrypted
+
+# === Platform Specific Builds ===
+/binaries/
+*.dmg
+*.app
+*.AppImage
+*.deb
+*.rpm
+*.exe
+*.msi
+
+# === Development ===
+.eslintcache
+.stylelintcache
+*.local
+.vercel
+
+# Keep these files
+!.gitkeep
+!.gitattributes
+!README.md
+!LICENSE
