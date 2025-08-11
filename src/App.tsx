@@ -1,22 +1,15 @@
-import React, { useState, useEffect } from 'react';
-import { invoke } from '@tauri-apps/api/core';
+import { useState, useEffect } from 'react';
 import { Terminal } from './components/Terminal';
 import { AIPanel } from './components/AIPanel';
 import { Sidebar } from './components/Sidebar';
 import { useTerminalStore } from './store/terminalStore';
 import { useAIStore } from './store/aiStore';
 
-interface AIResponse {
-  text: string;
-  confidence: number;
-  reasoning?: string;
-}
-
 function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [aiModelLoaded, setAiModelLoaded] = useState(false);
-  const { activeSession, createSession } = useTerminalStore();
-  const { suggestions, loadModel } = useAIStore();
+  const { createSession } = useTerminalStore();
+  const { loadModel } = useAIStore();
 
   useEffect(() => {
     const initializeApp = async () => {
