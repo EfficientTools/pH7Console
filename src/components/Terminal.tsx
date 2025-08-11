@@ -9,6 +9,9 @@ export const Terminal: React.FC = () => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [completions, setCompletions] = useState<string[]>([]);
   const [selectedCompletion, setSelectedCompletion] = useState(0);
+  const [showHistory, setShowHistory] = useState(false);
+  const [hoveredCommand, setHoveredCommand] = useState<string | null>(null);
+  const [commandExplanation, setCommandExplanation] = useState<string | null>(null);
   
   const inputRef = useRef<HTMLInputElement>(null);
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -92,7 +95,27 @@ export const Terminal: React.FC = () => {
 
   useHotkeys('escape', () => {
     setShowSuggestions(false);
+    setShowHistory(false);
+    setCommandExplanation(null);
   }, { enableOnFormTags: true });
+
+  // Handle command explanation on hover
+  const handleCommandHover = async (command: string) => {
+    if (hoveredCommand === command || !isModelLoaded) return;
+    
+    setHoveredCommand(command);
+    try {
+      const explanation = await explainCommand(command);
+      setCommandExplanation(explanation.text);
+    } catch (error) {
+      console.error('Failed to get explanation:', error);
+    }
+  };
+
+  const handleCommandLeave = () => {
+    setHoveredCommand(null);
+    setCommandExplanation(null);
+  };
 
   const handleExecuteCommand = async () => {
     if (!input.trim() || isExecuting) return;
@@ -137,6 +160,34 @@ export const Terminal: React.FC = () => {
 
   return (
     <div className="h-full flex flex-col bg-terminal-bg">
+      {/* Header with History Toggle */}
+      <div className="flex items-center justify-between px-4 py-2 border-b border-terminal-border">
+        <div className="flex items-center space-x-2">
+          <TerminalIcon className="w-5 h-5 text-ai-primary" />
+          <span className="text-sm font-medium text-terminal-text">
+            Session: {activeSession}
+          </span>
+        </div>
+        <button
+          onClick={() => setShowHistory(!showHistory)}
+          className="flex items-center space-x-1 px-3 py-1 rounded hover:bg-terminal-border transition-colors"
+        >
+          <History className="w-4 h-4 text-terminal-muted" />
+          <span className="text-xs text-terminal-muted">History</span>
+        </button>
+      </div>
+
+      {/* Command Explanation Tooltip */}
+      {commandExplanation && hoveredCommand && (
+        <div className="mx-4 mt-2 p-3 bg-ai-primary/10 border border-ai-primary/20 rounded">
+          <div className="flex items-center space-x-2 mb-1">
+            <Zap className="w-4 h-4 text-ai-primary" />
+            <span className="text-xs font-medium text-ai-primary">Command Explanation</span>
+          </div>
+          <p className="text-sm text-terminal-text">{commandExplanation}</p>
+        </div>
+      )}
+
       {/* Terminal Output */}
       <div 
         ref={terminalRef}
@@ -150,7 +201,14 @@ export const Terminal: React.FC = () => {
                 {getCurrentPath()}
               </span>
               <span className="text-terminal-muted">$</span>
-              <span className="text-terminal-text">{execution.command}</span>
+              <span 
+                className="text-terminal-text cursor-pointer hover:text-ai-primary transition-colors"
+                onMouseEnter={() => handleCommandHover(execution.command)}
+                onMouseLeave={handleCommandLeave}
+                title={isModelLoaded ? "Hover for AI explanation" : ""}
+              >
+                {execution.command}
+              </span>
               <span className="text-terminal-muted text-xs ml-auto">
                 {formatTimestamp(execution.timestamp)}
               </span>
@@ -180,6 +238,46 @@ export const Terminal: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* History Panel */}
+      {showHistory && (
+        <div className="border-t border-terminal-border bg-terminal-bg/50 backdrop-blur">
+          <div className="p-4">
+            <div className="flex items-center space-x-2 mb-3">
+              <History className="w-4 h-4 text-ai-primary" />
+              <span className="text-sm font-medium text-ai-primary">Command History</span>
+              <span className="text-xs text-terminal-muted">
+                ({commandHistory.length} commands)
+              </span>
+            </div>
+            <div className="space-y-1 max-h-32 overflow-y-auto">
+              {commandHistory.slice(-10).map((execution) => (
+                <div
+                  key={execution.id}
+                  className="flex items-center justify-between p-2 rounded hover:bg-terminal-border cursor-pointer group"
+                  onClick={() => {
+                    setInput(execution.command);
+                    setShowHistory(false);
+                    inputRef.current?.focus();
+                  }}
+                >
+                  <span className="text-sm font-mono text-terminal-text group-hover:text-ai-primary">
+                    {execution.command}
+                  </span>
+                  <div className="flex items-center space-x-2 text-xs text-terminal-muted">
+                    {execution.exit_code === 0 ? (
+                      <span className="text-green-400">✓</span>
+                    ) : (
+                      <span className="text-red-400">✗</span>
+                    )}
+                    <span>{formatTimestamp(execution.timestamp)}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Input Area */}
       <div className="border-t border-terminal-border p-4">
