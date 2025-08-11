@@ -51,7 +51,7 @@
       "providerShortName": null,
       "signingIdentity": null
     },
-    "resources": ["models/*"],
+    "resources": [],
     "shortDescription": "ML-First Terminal",
     "targets": "all",
     "windows": {
