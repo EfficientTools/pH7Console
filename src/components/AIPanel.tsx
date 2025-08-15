@@ -16,14 +16,12 @@ export const AIPanel: React.FC = () => {
   const [naturalLanguageInput, setNaturalLanguageInput] = React.useState('');
 
   const handleNaturalLanguageSubmit = async () => {
-    if (!naturalLanguageInput.trim() || !activeSession) return;
-    
-    const context = commandHistory.slice(-3).map(cmd => cmd.command).join('; ');
-    const result = await translateNaturalLanguage(naturalLanguageInput, context);
-    
-    // Add as suggestion
-    // Implementation would add to suggestions store
-    setNaturalLanguageInput('');
+  if (!naturalLanguageInput.trim() || !activeSession) return;
+  const context = commandHistory.slice(-3).map(cmd => cmd.command).join('; ');
+  await translateNaturalLanguage(naturalLanguageInput, context);
+  // Add as suggestion
+  // Implementation would add to suggestions store
+  setNaturalLanguageInput('');
   };
 
   return (
