@@ -1,8 +1,5 @@
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
-use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::process::Command;
 use uuid::Uuid;
 use serde::{Deserialize, Serialize};
 
@@ -28,7 +25,6 @@ pub struct CommandExecution {
 pub struct TerminalManager {
     sessions: HashMap<String, TerminalSession>,
     command_history: Vec<CommandExecution>,
-    pty_system: Box<dyn portable_pty::PtySystem>,
 }
 
 impl TerminalManager {
@@ -36,7 +32,6 @@ impl TerminalManager {
         Self {
             sessions: HashMap::new(),
             command_history: Vec::new(),
-            pty_system: native_pty_system(),
         }
     }
 
@@ -64,7 +59,7 @@ impl TerminalManager {
         let start_time = std::time::Instant::now();
         let execution_id = Uuid::new_v4().to_string();
         
-        // Parse command and arguments
+        // Parse command and arguments for simplified execution
         let parts: Vec<&str> = command.split_whitespace().collect();
         if parts.is_empty() {
             return Err("Empty command".into());
@@ -73,47 +68,38 @@ impl TerminalManager {
         let cmd = parts[0];
         let args = &parts[1..];
         
-        // Create PTY for command execution
-        let pty_size = PtySize {
-            rows: 24,
-            cols: 80,
-            pixel_width: 0,
-            pixel_height: 0,
-        };
-        
-        let mut command_builder = CommandBuilder::new(cmd);
-        command_builder.args(args);
-        
         // Set working directory if session exists
-        if let Some(session) = self.sessions.get(session_id) {
-            command_builder.cwd(&session.working_directory);
-        }
-        
-        let mut child = self.pty_system.openpty(pty_size)?;
-        let mut process = child.slave.spawn_command(command_builder)?;
-        
-        // Read output (simplified for demo)
-        let mut output = String::new();
-        let exit_code = match process.wait() {
-            Ok(status) => status.success().then_some(0).or(Some(1)),
-            Err(_) => Some(1),
+        let working_dir = if let Some(session) = self.sessions.get(session_id) {
+            session.working_directory.clone()
+        } else {
+            std::env::current_dir()?.to_string_lossy().to_string()
         };
         
-        // For demo purposes, simulate some output
-        if cmd == "echo" {
-            output = args.join(" ");
-        } else if cmd == "pwd" {
-            output = std::env::current_dir()?.to_string_lossy().to_string();
-        } else if cmd == "ls" {
-            // Simple ls implementation
-            let entries = std::fs::read_dir(".")?
-                .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
-                .collect::<Vec<_>>()
-                .join("\n");
-            output = entries;
-        } else {
-            output = format!("Command '{}' executed", command);
-        }
+        // Execute command using std::process::Command (simplified approach)
+        let output_result = Command::new(cmd)
+            .args(args)
+            .current_dir(&working_dir)
+            .output();
+        
+        let (output, exit_code) = match output_result {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                let combined = if stderr.is_empty() {
+                    stdout
+                } else if stdout.is_empty() {
+                    stderr
+                } else {
+                    format!("{}\n{}", stdout, stderr)
+                };
+                
+                let exit_code = output.status.code();
+                (combined, exit_code)
+            },
+            Err(e) => {
+                (format!("Error executing command: {}", e), Some(1))
+            }
+        };
         
         let duration = start_time.elapsed();
         

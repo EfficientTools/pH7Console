@@ -41,7 +41,7 @@
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
-      "icons/icon.ico"
+      "icons/icon.png"
     ],
     "longDescription": "An intelligent, ML-first terminal with local AI capabilities",
     "macOS": {
@@ -68,13 +68,6 @@
   "plugins": {
     "shell": {
       "open": true
-    },
-    "fs": {
-      "all": true,
-      "scope": ["$HOME/**", "$APPDATA/**", "$LOCALDATA/**"]
-    },
-    "process": {
-      "all": true
     }
   }
 }
