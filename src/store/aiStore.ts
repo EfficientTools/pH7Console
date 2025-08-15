@@ -9,10 +9,10 @@ interface AIResponse {
 
 interface AISuggestion {
   id: string;
-  type: 'command' | 'explanation' | 'fix' | 'completion';
+  type: 'command' | 'explanation' | 'fix' | 'completion' | 'optimization' | 'analysis' | 'error';
   content: string;
   confidence: number;
-  timestamp: string;
+  timestamp: number;
 }
 
 interface AIState {
@@ -29,6 +29,7 @@ interface AIState {
   analyzeOutput: (output: string, command: string) => Promise<AIResponse>;
   getCompletions: (partialCommand: string, sessionId: string) => Promise<string[]>;
   translateNaturalLanguage: (text: string, context: string) => Promise<AIResponse>;
+  addSuggestion: (suggestion: AISuggestion) => void;
   clearSuggestions: () => void;
 }
 
@@ -65,7 +66,7 @@ export const useAIStore = create<AIState>((set, get) => ({
         type: 'command',
         content: response.text,
         confidence: response.confidence,
-        timestamp: new Date().toISOString(),
+        timestamp: Date.now(),
       };
 
       set(state => ({
@@ -131,6 +132,12 @@ export const useAIStore = create<AIState>((set, get) => ({
       console.error('Failed to translate natural language:', error);
       return { text: 'Unable to translate', confidence: 0 };
     }
+  },
+
+  addSuggestion: (suggestion: AISuggestion) => {
+    set(state => ({
+      suggestions: [...state.suggestions, suggestion]
+    }));
   },
 
   clearSuggestions: () => {

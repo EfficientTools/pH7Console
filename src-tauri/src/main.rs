@@ -44,6 +44,15 @@ fn main() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::create_terminal,
+            commands::execute_command,
+            commands::get_terminal_output,
+            commands::ai_suggest_command,
+            commands::ai_explain_command,
+            commands::ai_fix_error,
+            commands::ai_analyze_output,
+            commands::get_smart_completions,
+            commands::ai_translate_natural_language,
             commands::test_command
         ])
         .run(tauri::generate_context!())

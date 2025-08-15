@@ -2,6 +2,7 @@ import React from 'react';
 import { useAIStore } from '../store/aiStore';
 import { useTerminalStore } from '../store/terminalStore';
 import { Brain, Lightbulb, AlertCircle, Zap, MessageSquare } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 
 export const AIPanel: React.FC = () => {
   const { 
@@ -9,19 +10,95 @@ export const AIPanel: React.FC = () => {
     suggestions, 
     isProcessing, 
     clearSuggestions,
-    translateNaturalLanguage 
+    translateNaturalLanguage,
+    addSuggestion 
   } = useAIStore();
   
   const { activeSession, commandHistory } = useTerminalStore();
   const [naturalLanguageInput, setNaturalLanguageInput] = React.useState('');
 
   const handleNaturalLanguageSubmit = async () => {
-  if (!naturalLanguageInput.trim() || !activeSession) return;
-  const context = commandHistory.slice(-3).map(cmd => cmd.command).join('; ');
-  await translateNaturalLanguage(naturalLanguageInput, context);
-  // Add as suggestion
-  // Implementation would add to suggestions store
-  setNaturalLanguageInput('');
+    if (!naturalLanguageInput.trim() || !activeSession) return;
+    const context = commandHistory.slice(-3).map(cmd => cmd.command).join('; ');
+    await translateNaturalLanguage(naturalLanguageInput, context);
+    setNaturalLanguageInput('');
+  };
+
+  const handleQuickAction = async (action: 'explain' | 'fix' | 'optimize' | 'analyze') => {
+    if (!activeSession || commandHistory.length === 0) return;
+
+    const lastCommand = commandHistory[commandHistory.length - 1];
+    if (!lastCommand) return;
+
+    try {
+      let result = '';
+      
+      switch (action) {
+        case 'explain':
+          result = await invoke('ai_explain_command', {
+            command: lastCommand.command
+          });
+          addSuggestion({
+            id: Date.now().toString(),
+            type: 'explanation',
+            content: result,
+            confidence: 0.9,
+            timestamp: Date.now()
+          });
+          break;
+          
+        case 'fix':
+          const errorOutput = lastCommand.output || '';
+          result = await invoke('ai_fix_error', {
+            command: lastCommand.command,
+            error: errorOutput
+          });
+          addSuggestion({
+            id: Date.now().toString(),
+            type: 'fix',
+            content: result,
+            confidence: 0.85,
+            timestamp: Date.now()
+          });
+          break;
+          
+        case 'optimize':
+          result = await invoke('ai_suggest_command', {
+            context: `Optimize this command: ${lastCommand.command}`
+          });
+          addSuggestion({
+            id: Date.now().toString(),
+            type: 'optimization',
+            content: result,
+            confidence: 0.8,
+            timestamp: Date.now()
+          });
+          break;
+          
+        case 'analyze':
+          result = await invoke('ai_analyze_output', {
+            command: lastCommand.command,
+            output: lastCommand.output || ''
+          });
+          addSuggestion({
+            id: Date.now().toString(),
+            type: 'analysis',
+            content: result,
+            confidence: 0.9,
+            timestamp: Date.now()
+          });
+          break;
+      }
+    } catch (error) {
+      console.error(`Failed to execute ${action} action:`, error);
+      addSuggestion({
+        id: Date.now().toString(),
+        type: 'error',
+        content: `Failed to ${action} command. Please try again.`,
+        confidence: 0.5,
+        timestamp: Date.now()
+      });
+    }
   };
 
   return (
@@ -135,19 +212,35 @@ export const AIPanel: React.FC = () => {
           </h3>
           
           <div className="grid grid-cols-2 gap-2">
-            <button className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring">
+            <button 
+              onClick={() => handleQuickAction('explain')}
+              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing}
+              className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               Explain Last
             </button>
             
-            <button className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring">
+            <button 
+              onClick={() => handleQuickAction('fix')}
+              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing}
+              className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               Fix Error
             </button>
             
-            <button className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring">
+            <button 
+              onClick={() => handleQuickAction('optimize')}
+              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing}
+              className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               Optimize
             </button>
             
-            <button className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring">
+            <button 
+              onClick={() => handleQuickAction('analyze')}
+              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing}
+              className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               Analyze
             </button>
           </div>

@@ -139,7 +139,7 @@ impl ModelManager {
         self.is_loaded
     }
 
-    pub async fn get_smart_completions(&self, partial_command: &str, context: &str) -> Vec<String> {
+    pub async fn get_smart_completions(&self, partial_command: &str, _context: &str) -> Vec<String> {
         // Smart command completion based on context
         let mut completions = Vec::new();
         
