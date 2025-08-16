@@ -22,12 +22,13 @@ tauri-plugin-process = "2.0"
 # Date/time utilities
 chrono = { version = "0.4", features = ["serde"] }
 
-# Local AI/ML Dependencies (commented out for initial setup)
+# Local AI/ML Dependencies - using lightweight approach for better compatibility
 # candle-core = "0.6"
 # candle-nn = "0.6"
 # candle-transformers = "0.6"
 # tokenizers = "0.19"
 # hf-hub = "0.3"
+anyhow = "1.0"
 
 # Terminal/PTY handling
 portable-pty = "0.8"
@@ -36,7 +37,7 @@ tokio = { version = "1.0", features = ["full"] }
 # System integration
 sysinfo = "0.30"
 dirs = "5.0"
-uuid = { version = "1.0", features = ["v4"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
 
 # Async utilities
 futures = "0.3"

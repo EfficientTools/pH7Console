@@ -43,7 +43,7 @@ fn main() {
             
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+                .invoke_handler(tauri::generate_handler![
             commands::create_terminal,
             commands::execute_command,
             commands::get_terminal_output,
@@ -53,7 +53,21 @@ fn main() {
             commands::ai_analyze_output,
             commands::get_smart_completions,
             commands::ai_translate_natural_language,
-            commands::test_command
+            commands::get_user_analytics,
+            commands::update_ai_feedback,
+            commands::create_agent_task,
+            commands::get_agent_task_status,
+            commands::get_active_agent_tasks,
+            commands::cancel_agent_task,
+            commands::close_terminal_session,
+            commands::update_session_title,
+            commands::resize_terminal,
+            commands::get_system_info,
+            commands::get_context_suggestions,
+            commands::get_all_sessions,
+            commands::get_path_completions,
+            commands::get_command_history_for_navigation,
+            commands::search_command_history,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

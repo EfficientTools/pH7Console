@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { X, Settings as SettingsIcon, Monitor, Palette, Keyboard, Brain } from 'lucide-react';
+import { useClickOutside } from '../hooks/useClickOutside';
 
 interface SettingsProps {
   isOpen: boolean;
@@ -8,6 +9,10 @@ interface SettingsProps {
 
 export const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
   const [activeTab, setActiveTab] = useState('appearance');
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Close modal when clicking outside
+  useClickOutside(modalRef, onClose, isOpen);
   const [settings, setSettings] = useState({
     appearance: {
       theme: 'dark',
@@ -58,7 +63,10 @@ export const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
-      <div className="bg-terminal-surface border border-terminal-border rounded-lg shadow-2xl w-full max-w-4xl h-[80vh] flex">
+      <div 
+        ref={modalRef}
+        className="bg-terminal-surface border border-terminal-border rounded-lg shadow-2xl w-full max-w-4xl h-[80vh] flex"
+      >
         {/* Sidebar */}
         <div className="w-64 border-r border-terminal-border">
           <div className="p-4 border-b border-terminal-border">

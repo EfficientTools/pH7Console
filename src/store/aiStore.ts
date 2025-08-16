@@ -31,6 +31,24 @@ interface AIState {
   translateNaturalLanguage: (text: string, context: string) => Promise<AIResponse>;
   addSuggestion: (suggestion: AISuggestion) => void;
   clearSuggestions: () => void;
+  
+  // Learning features
+  updateFeedback: (command: string, feedback: number) => Promise<void>;
+  getUserAnalytics: () => Promise<UserAnalytics | null>;
+  
+  // Agent mode
+  createAgentTask: (description: string) => Promise<string>;
+  getAgentTaskStatus: (taskId: string) => Promise<string | null>;
+  getActiveAgentTasks: () => Promise<string[]>;
+  cancelAgentTask: (taskId: string) => Promise<void>;
+}
+
+interface UserAnalytics {
+  total_commands: number;
+  success_rate: number;
+  most_used_commands: [string, number][];
+  learning_examples: number;
+  patterns_learned: number;
 }
 
 export const useAIStore = create<AIState>((set, get) => ({
@@ -123,13 +141,39 @@ export const useAIStore = create<AIState>((set, get) => ({
   },
 
   translateNaturalLanguage: async (text: string, context: string) => {
+    if (!get().isModelLoaded) {
+      return { text: 'AI model not loaded', confidence: 0 };
+    }
+    
+    set({ isProcessing: true });
     try {
-      return await invoke<AIResponse>('ai_translate_natural_language', {
+      const response = await invoke<AIResponse>('ai_translate_natural_language', {
         naturalLanguage: text,
         context,
       });
+      
+      // Add as a suggestion if it's a valid command
+      if (response.text && !response.text.startsWith('#') && !response.text.includes('need more')) {
+        const suggestion: AISuggestion = {
+          id: Date.now().toString(),
+          type: 'command',
+          content: response.text,
+          confidence: response.confidence,
+          timestamp: Date.now(),
+        };
+        
+        set(state => ({
+          suggestions: [...state.suggestions, suggestion],
+          isProcessing: false,
+        }));
+      } else {
+        set({ isProcessing: false });
+      }
+      
+      return response;
     } catch (error) {
       console.error('Failed to translate natural language:', error);
+      set({ isProcessing: false });
       return { text: 'Unable to translate', confidence: 0 };
     }
   },
@@ -142,5 +186,58 @@ export const useAIStore = create<AIState>((set, get) => ({
 
   clearSuggestions: () => {
     set({ suggestions: [] });
+  },
+
+  updateFeedback: async (command: string, feedback: number) => {
+    try {
+      await invoke('update_ai_feedback', { command, feedback });
+    } catch (error) {
+      console.error('Failed to update feedback:', error);
+    }
+  },
+
+  getUserAnalytics: async () => {
+    try {
+      return await invoke<UserAnalytics | null>('get_user_analytics');
+    } catch (error) {
+      console.error('Failed to get analytics:', error);
+      return null;
+    }
+  },
+
+  createAgentTask: async (description: string) => {
+    try {
+      return await invoke<string>('create_agent_task', { description });
+    } catch (error) {
+      console.error('Failed to create agent task:', error);
+      throw error;
+    }
+  },
+
+  getAgentTaskStatus: async (taskId: string) => {
+    try {
+      return await invoke<string | null>('get_agent_task_status', { taskId });
+    } catch (error) {
+      console.error('Failed to get task status:', error);
+      return null;
+    }
+  },
+
+  getActiveAgentTasks: async () => {
+    try {
+      return await invoke<string[]>('get_active_agent_tasks');
+    } catch (error) {
+      console.error('Failed to get active tasks:', error);
+      return [];
+    }
+  },
+
+  cancelAgentTask: async (taskId: string) => {
+    try {
+      await invoke('cancel_agent_task', { taskId });
+    } catch (error) {
+      console.error('Failed to cancel task:', error);
+      throw error;
+    }
   },
 }));

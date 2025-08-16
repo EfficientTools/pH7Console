@@ -1,7 +1,7 @@
 import React from 'react';
 import { useAIStore } from '../store/aiStore';
 import { useTerminalStore } from '../store/terminalStore';
-import { Brain, Lightbulb, AlertCircle, Zap, MessageSquare } from 'lucide-react';
+import { Brain, Lightbulb, AlertCircle, Zap, MessageSquare, ThumbsUp, ThumbsDown, Copy } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 
 export const AIPanel: React.FC = () => {
@@ -11,16 +11,63 @@ export const AIPanel: React.FC = () => {
     isProcessing, 
     clearSuggestions,
     translateNaturalLanguage,
-    addSuggestion 
+    addSuggestion,
+    updateFeedback
   } = useAIStore();
   
   const { activeSession, commandHistory } = useTerminalStore();
   const [naturalLanguageInput, setNaturalLanguageInput] = React.useState('');
+  const [quickActionLoading, setQuickActionLoading] = React.useState<string | null>(null);
 
   const handleNaturalLanguageSubmit = async () => {
     if (!naturalLanguageInput.trim() || !activeSession) return;
+    
     const context = commandHistory.slice(-3).map(cmd => cmd.command).join('; ');
-    await translateNaturalLanguage(naturalLanguageInput, context);
+    
+    try {
+      const response = await translateNaturalLanguage(naturalLanguageInput, context);
+      
+      // If we get a valid command, add it to suggestions
+      if (response.text && !response.text.startsWith('#')) {
+        addSuggestion({
+          id: Date.now().toString(),
+          type: 'command',
+          content: `💡 Natural Language → Command: ${response.text}`,
+          confidence: response.confidence,
+          timestamp: Date.now()
+        });
+        
+        // Add explanation if available
+        if (response.reasoning) {
+          addSuggestion({
+            id: (Date.now() + 1).toString(),
+            type: 'explanation',
+            content: response.reasoning,
+            confidence: response.confidence,
+            timestamp: Date.now()
+          });
+        }
+      } else {
+        // Add the response as a suggestion even if it's not a command
+        addSuggestion({
+          id: Date.now().toString(),
+          type: 'explanation',
+          content: response.text,
+          confidence: response.confidence,
+          timestamp: Date.now()
+        });
+      }
+    } catch (error) {
+      console.error('Natural language translation failed:', error);
+      addSuggestion({
+        id: Date.now().toString(),
+        type: 'error',
+        content: 'Failed to translate natural language. The AI model might not be ready yet.',
+        confidence: 0.1,
+        timestamp: Date.now()
+      });
+    }
+    
     setNaturalLanguageInput('');
   };
 
@@ -30,74 +77,93 @@ export const AIPanel: React.FC = () => {
     const lastCommand = commandHistory[commandHistory.length - 1];
     if (!lastCommand) return;
 
+    setQuickActionLoading(action);
+
     try {
-      let result = '';
+      let response: any = null;
       
       switch (action) {
         case 'explain':
-          result = await invoke('ai_explain_command', {
+          response = await invoke('ai_explain_command', {
             command: lastCommand.command
           });
           addSuggestion({
             id: Date.now().toString(),
             type: 'explanation',
-            content: result,
-            confidence: 0.9,
+            content: response.text || response,
+            confidence: response.confidence || 0.9,
             timestamp: Date.now()
           });
           break;
           
         case 'fix':
-          const errorOutput = lastCommand.output || '';
-          result = await invoke('ai_fix_error', {
+          response = await invoke('ai_fix_error', {
             command: lastCommand.command,
-            error: errorOutput
+            error_output: lastCommand.output || '',
+            context: commandHistory.slice(-3).map(cmd => cmd.command).join('; ')
           });
           addSuggestion({
             id: Date.now().toString(),
             type: 'fix',
-            content: result,
-            confidence: 0.85,
+            content: response.text || response,
+            confidence: response.confidence || 0.85,
             timestamp: Date.now()
           });
           break;
           
         case 'optimize':
-          result = await invoke('ai_suggest_command', {
-            context: `Optimize this command: ${lastCommand.command}`
+          response = await invoke('ai_suggest_command', {
+            context: `Optimize this command: ${lastCommand.command}`,
+            intent: 'optimization'
           });
           addSuggestion({
             id: Date.now().toString(),
             type: 'optimization',
-            content: result,
-            confidence: 0.8,
+            content: response.text || response,
+            confidence: response.confidence || 0.8,
             timestamp: Date.now()
           });
           break;
           
         case 'analyze':
-          result = await invoke('ai_analyze_output', {
+          response = await invoke('ai_analyze_output', {
             command: lastCommand.command,
             output: lastCommand.output || ''
           });
           addSuggestion({
             id: Date.now().toString(),
             type: 'analysis',
-            content: result,
-            confidence: 0.9,
+            content: response.text || response,
+            confidence: response.confidence || 0.9,
             timestamp: Date.now()
           });
           break;
       }
     } catch (error) {
       console.error(`Failed to execute ${action} action:`, error);
+      
+      // More specific error handling
+      let errorMessage = `Failed to ${action} command.`;
+      if (error instanceof Error) {
+        errorMessage += ` Error: ${error.message}`;
+      } else if (typeof error === 'string') {
+        errorMessage += ` Error: ${error}`;
+      }
+      
+      // Check if it's a model loading issue
+      if (!isModelLoaded) {
+        errorMessage += ' The AI model may not be loaded yet. Please wait for model initialization to complete.';
+      }
+      
       addSuggestion({
         id: Date.now().toString(),
         type: 'error',
-        content: `Failed to ${action} command. Please try again.`,
+        content: errorMessage,
         confidence: 0.5,
         timestamp: Date.now()
       });
+    } finally {
+      setQuickActionLoading(null);
     }
   };
 
@@ -126,7 +192,7 @@ export const AIPanel: React.FC = () => {
             <textarea
               value={naturalLanguageInput}
               onChange={(e) => setNaturalLanguageInput(e.target.value)}
-              placeholder="e.g., 'show me all large files in this directory'"
+              placeholder="Try: 'show me all large files', 'find files modified today', 'what's using the most memory', 'install node dependencies', 'check git status', 'list running processes on port 3000'"
               className="w-full bg-terminal-bg border border-terminal-border rounded-md px-3 py-2 text-sm text-terminal-text resize-none focus-ring"
               rows={3}
               disabled={!isModelLoaded}
@@ -179,23 +245,58 @@ export const AIPanel: React.FC = () => {
               {suggestions.map((suggestion) => (
                 <div
                   key={suggestion.id}
-                  className="ai-suggestion cursor-pointer hover:bg-ai-primary/5 transition-colors"
+                  className="ai-suggestion transition-colors"
                 >
                   <div className="flex items-start justify-between mb-2">
                     <span className="text-xs font-medium text-ai-primary capitalize">
                       {suggestion.type}
                     </span>
-                    <span className="text-xs text-terminal-muted">
-                      {Math.round(suggestion.confidence * 100)}%
-                    </span>
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs text-terminal-muted">
+                        {Math.round(suggestion.confidence * 100)}%
+                      </span>
+                      {suggestion.type === 'command' && (
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(suggestion.content.includes('→') 
+                              ? suggestion.content.split('→ ')[1] 
+                              : suggestion.content);
+                          }}
+                          className="p-1 hover:bg-ai-primary/20 rounded transition-colors"
+                          title="Copy command"
+                        >
+                          <Copy className="w-3 h-3 text-ai-primary" />
+                        </button>
+                      )}
+                    </div>
                   </div>
                   
                   <p className="text-sm text-terminal-text leading-relaxed">
                     {suggestion.content}
                   </p>
                   
-                  <div className="mt-2 text-xs text-terminal-muted">
-                    {new Date(suggestion.timestamp).toLocaleTimeString()}
+                  <div className="flex items-center justify-between mt-2">
+                    <div className="text-xs text-terminal-muted">
+                      {new Date(suggestion.timestamp).toLocaleTimeString()}
+                    </div>
+                    
+                    {/* Feedback buttons for learning */}
+                    <div className="flex items-center space-x-1">
+                      <button
+                        onClick={() => updateFeedback(suggestion.content, 1.0)}
+                        className="p-1 hover:bg-green-500/20 rounded transition-colors"
+                        title="This was helpful"
+                      >
+                        <ThumbsUp className="w-3 h-3 text-green-400" />
+                      </button>
+                      <button
+                        onClick={() => updateFeedback(suggestion.content, 0.0)}
+                        className="p-1 hover:bg-red-500/20 rounded transition-colors"
+                        title="This was not helpful"
+                      >
+                        <ThumbsDown className="w-3 h-3 text-red-400" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -214,34 +315,34 @@ export const AIPanel: React.FC = () => {
           <div className="grid grid-cols-2 gap-2">
             <button 
               onClick={() => handleQuickAction('explain')}
-              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing}
+              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing || quickActionLoading !== null}
               className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Explain Last
+              {quickActionLoading === 'explain' ? 'Explaining...' : 'Explain Last'}
             </button>
             
             <button 
               onClick={() => handleQuickAction('fix')}
-              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing}
+              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing || quickActionLoading !== null}
               className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Fix Error
+              {quickActionLoading === 'fix' ? 'Fixing...' : 'Fix Error'}
             </button>
             
             <button 
               onClick={() => handleQuickAction('optimize')}
-              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing}
+              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing || quickActionLoading !== null}
               className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Optimize
+              {quickActionLoading === 'optimize' ? 'Optimizing...' : 'Optimize'}
             </button>
             
             <button 
               onClick={() => handleQuickAction('analyze')}
-              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing}
+              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing || quickActionLoading !== null}
               className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Analyze
+              {quickActionLoading === 'analyze' ? 'Analyzing...' : 'Analyze'}
             </button>
           </div>
         </div>

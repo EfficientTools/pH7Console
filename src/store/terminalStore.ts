@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
 
-interface CommandExecution {
+export interface CommandExecution {
   id: string;
   command: string;
   output: string;
@@ -10,7 +10,7 @@ interface CommandExecution {
   timestamp: string;
 }
 
-interface TerminalSession {
+export interface TerminalSession {
   id: string;
   title: string;
   working_directory: string;
@@ -27,8 +27,11 @@ interface TerminalState {
   
   // Actions
   createSession: (title?: string) => Promise<void>;
+  closeSession: (sessionId: string) => Promise<void>;
+  updateSessionTitle: (sessionId: string, title: string) => Promise<void>;
   setActiveSession: (sessionId: string) => void;
   executeCommand: (command: string) => Promise<void>;
+  clearHistory: () => void;
   setCurrentInput: (input: string) => void;
   getHistory: () => CommandExecution[];
 }
@@ -60,6 +63,43 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
   },
 
+  closeSession: async (sessionId: string) => {
+    try {
+      await invoke('close_terminal_session', { sessionId });
+      
+      set(state => {
+        const updatedSessions = state.sessions.filter(session => session.id !== sessionId);
+        let newActiveSession = state.activeSession;
+        
+        // If we're closing the active session, switch to another one
+        if (state.activeSession === sessionId) {
+          newActiveSession = updatedSessions.length > 0 ? updatedSessions[0].id : null;
+        }
+        
+        return {
+          sessions: updatedSessions,
+          activeSession: newActiveSession,
+        };
+      });
+    } catch (error) {
+      console.error('Failed to close terminal session:', error);
+    }
+  },
+
+  updateSessionTitle: async (sessionId: string, title: string) => {
+    try {
+      await invoke('update_session_title', { sessionId, title });
+      
+      set(state => ({
+        sessions: state.sessions.map(session =>
+          session.id === sessionId ? { ...session, title } : session
+        ),
+      }));
+    } catch (error) {
+      console.error('Failed to update session title:', error);
+    }
+  },
+
   setActiveSession: (sessionId: string) => {
     set({ activeSession: sessionId });
   },
@@ -85,6 +125,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       console.error('Failed to execute command:', error);
       set({ isExecuting: false });
     }
+  },
+
+  clearHistory: () => {
+    set({ commandHistory: [] });
   },
 
   setCurrentInput: (input: string) => {
