@@ -1,4 +1,4 @@
-## MIT License
+## MIT License - pH7Console
 
 ### Copyright (c) 2025 Pierre-Henry Soria
 
