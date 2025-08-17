@@ -20,10 +20,65 @@ pub async fn execute_command(
     session_id: String,
     command: String
 ) -> Result<CommandExecution, String> {
-    let start_time = std::time::Instant::now();
+    let _start_time = std::time::Instant::now();
     let mut terminal_manager = state.inner().terminal_manager.lock().await;
     
-    let result = terminal_manager.execute_command(&session_id, &command)
+    // Detect if this is a natural language command and translate it first
+    let actual_command = if is_natural_language_command(&command) {
+        println!("🔍 Detected natural language command: '{}'", command);
+        
+        // Get the model manager to translate
+        let model_manager = state.inner().model_manager.lock().await;
+        
+        // Check if model is loaded
+        if !model_manager.is_model_loaded() {
+            println!("⚠️ Model not loaded yet, attempting to load...");
+            // Try to load the model if not already loaded
+            drop(model_manager); // Release the lock
+            let mut model_manager = state.inner().model_manager.lock().await;
+            if let Err(e) = model_manager.load_model().await {
+                println!("❌ Failed to load model: {}", e);
+                // Fall back to original command
+                command.clone()
+            } else {
+                println!("✅ Model loaded successfully!");
+                let context = terminal_manager.get_smart_context(&session_id);
+                let translation_result = model_manager.process_command_with_ml(&command, Some(&context)).await;
+                
+                if translation_result.confidence > 0.6 {
+                    let translated_cmd = translation_result.text.clone();
+                    println!("✅ Translated to: '{}' (confidence: {:.1}%)", translated_cmd, translation_result.confidence * 100.0);
+                    
+                    // Remove the 🤖 marker if present for execution
+                    translated_cmd.replace("🤖 ", "")
+                } else {
+                    println!("⚠️ Low confidence translation, executing original command");
+                    command.clone()
+                }
+            }
+        } else {
+            let context = terminal_manager.get_smart_context(&session_id);
+            
+            // Translate natural language to command
+            let translation_result = model_manager.process_command_with_ml(&command, Some(&context)).await;
+            
+            if translation_result.confidence > 0.6 {
+                let translated_cmd = translation_result.text.clone();
+                println!("✅ Translated to: '{}' (confidence: {:.1}%)", translated_cmd, translation_result.confidence * 100.0);
+                
+                // Remove the 🤖 marker if present for execution
+                translated_cmd.replace("🤖 ", "")
+            } else {
+                println!("⚠️ Low confidence translation, executing original command");
+                command.clone()
+            }
+        }
+    } else {
+        println!("📝 Regular shell command: '{}'", command);
+        command.clone()
+    };
+    
+    let result = terminal_manager.execute_command(&session_id, &actual_command)
         .await
         .map_err(|e| e.to_string());
 
@@ -34,7 +89,7 @@ pub async fn execute_command(
         let success = execution.exit_code.unwrap_or(0) == 0;
         
         model_manager.learn_from_command(
-            &command,
+            &command, // Use original command for learning
             &execution.output,
             &context,
             success,
@@ -43,6 +98,92 @@ pub async fn execute_command(
     }
 
     result
+}
+
+/// Detect if a command is natural language vs a regular shell command
+fn is_natural_language_command(command: &str) -> bool {
+    let cmd_lower = command.to_lowercase().trim().to_string();
+    
+    // Check for obvious shell commands first
+    if cmd_lower.starts_with("ls") || cmd_lower.starts_with("cd ") || cmd_lower.starts_with("pwd") ||
+       cmd_lower.starts_with("git ") || cmd_lower.starts_with("npm ") || cmd_lower.starts_with("cargo ") ||
+       cmd_lower.starts_with("mkdir ") || cmd_lower.starts_with("touch ") || cmd_lower.starts_with("rm ") ||
+       cmd_lower.starts_with("cp ") || cmd_lower.starts_with("mv ") || cmd_lower.starts_with("find ") ||
+       cmd_lower.starts_with("grep ") || cmd_lower.starts_with("cat ") || cmd_lower.starts_with("echo ") ||
+       cmd_lower.starts_with("sudo ") || cmd_lower.starts_with("./") || cmd_lower.starts_with("../") ||
+       cmd_lower.starts_with("man ") || cmd_lower.starts_with("which ") || cmd_lower.starts_with("ps ") ||
+       cmd_lower.starts_with("top") || cmd_lower.starts_with("htop") || cmd_lower.starts_with("df ") {
+        return false;
+    }
+    
+    // Highly specific natural language patterns that we want to catch
+    let high_confidence_patterns = [
+        "go home", "go to home", "go home directory", "go to home directory",
+        "go to parent", "go to parent directory", "go up", "go back",
+        "show files", "list files", "show me files", "display files",
+        "what files", "what's here", "what is here",
+        "where am i", "current directory", "present working directory",
+        "create file", "make file", "new file", "add file",
+        "create folder", "make folder", "make directory", "create directory",
+        "git status", "check git", "git state", "repository status",
+        "install package", "add package", "npm install",
+        "run project", "start project", "build project"
+    ];
+    
+    // Check for exact matches or substring matches of high confidence patterns
+    for pattern in &high_confidence_patterns {
+        if cmd_lower == *pattern || cmd_lower.contains(pattern) {
+            return true;
+        }
+    }
+    
+    // Check for natural language sentence structure patterns
+    let natural_patterns = [
+        "go to", "navigate to", "change to", "move to", "switch to",
+        "show me", "list", "display", "what", "where", "how",
+        "create", "make", "build", "install", "run",
+        "find", "search for", "look for", "locate",
+        "home directory", "parent directory", "current directory",
+        "files", "folder", "directory",
+        "status", "help", "explain"
+    ];
+    
+    let pattern_matches = natural_patterns.iter().filter(|&&pattern| cmd_lower.contains(pattern)).count();
+    
+    // If it contains natural language patterns
+    if pattern_matches > 0 {
+        return true;
+    }
+    
+    // Check for sentence-like structure (contains common English words)
+    let english_words = ["the", "a", "an", "to", "in", "on", "at", "for", "with", "by", "my", "me", "i"];
+    let word_count = english_words.iter().filter(|&&word| cmd_lower.contains(word)).count();
+    
+    // If it contains multiple English words and is longer than typical commands, likely natural language
+    if word_count >= 1 && cmd_lower.len() > 10 {
+        return true;
+    }
+    
+    // Additional check: if it doesn't start with a known command and contains spaces, likely natural language
+    let words: Vec<&str> = cmd_lower.split_whitespace().collect();
+    if words.len() > 1 {
+        let first_word = words[0];
+        // List of common Unix commands
+        let unix_commands = [
+            "ls", "cd", "pwd", "mkdir", "rmdir", "rm", "cp", "mv", "ln", "find", "grep", "cat", "less", "more",
+            "head", "tail", "sort", "uniq", "wc", "chmod", "chown", "ps", "top", "kill", "jobs", "bg", "fg",
+            "nohup", "ssh", "scp", "rsync", "tar", "gzip", "gunzip", "zip", "unzip", "curl", "wget", "ping",
+            "traceroute", "netstat", "ifconfig", "iptables", "git", "npm", "cargo", "python", "node", "java",
+            "gcc", "make", "cmake", "docker", "kubectl", "sudo", "su", "whoami", "id", "groups", "history",
+            "alias", "which", "whereis", "locate", "man", "info", "help", "clear", "reset", "exit", "logout"
+        ];
+        
+        if !unix_commands.contains(&first_word) && words.len() >= 2 {
+            return true;
+        }
+    }
+    
+    false
 }
 
 #[tauri::command]
@@ -316,4 +457,17 @@ pub async fn search_command_history(
 #[tauri::command]
 pub async fn test_command() -> Result<String, String> {
     Ok("Test successful".to_string())
+}
+
+/// Initialize the ML system
+#[tauri::command]
+pub async fn initialize_ml_system(
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    let mut model_manager = state.inner().model_manager.lock().await;
+    
+    match model_manager.load_model().await {
+        Ok(_) => Ok("ML system initialized successfully".to_string()),
+        Err(e) => Err(format!("Failed to initialize ML system: {}", e))
+    }
 }

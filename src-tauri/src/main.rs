@@ -28,17 +28,21 @@ fn main() {
             let terminal_manager = Arc::new(Mutex::new(TerminalManager::new()));
             
             let app_state = AppState {
-                model_manager,
+                model_manager: model_manager.clone(),
                 terminal_manager,
             };
             
             app.manage(app_state);
             
             // Initialize local AI models on startup
-            let app_handle = app.handle().clone();
+            let _app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 println!("🤖 Initializing local AI models...");
-                // Model initialization will happen here
+                // Auto-load the model on startup
+                match model_manager.lock().await.load_model().await {
+                    Ok(_) => println!("✅ AI models loaded successfully and ready for natural language commands!"),
+                    Err(e) => println!("⚠️ Failed to load AI models: {}", e),
+                }
             });
             
             Ok(())
@@ -68,6 +72,7 @@ fn main() {
             commands::get_path_completions,
             commands::get_command_history_for_navigation,
             commands::search_command_history,
+            commands::initialize_ml_system,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
