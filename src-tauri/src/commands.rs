@@ -104,7 +104,7 @@ pub async fn execute_command(
 fn is_natural_language_command(command: &str) -> bool {
     let cmd_lower = command.to_lowercase().trim().to_string();
     
-    // Check for obvious shell commands first
+    // Check for obvious shell commands first (including single-word commands)
     if cmd_lower.starts_with("ls") || cmd_lower.starts_with("cd ") || cmd_lower.starts_with("pwd") ||
        cmd_lower.starts_with("git ") || cmd_lower.starts_with("npm ") || cmd_lower.starts_with("cargo ") ||
        cmd_lower.starts_with("mkdir ") || cmd_lower.starts_with("touch ") || cmd_lower.starts_with("rm ") ||
@@ -112,7 +112,17 @@ fn is_natural_language_command(command: &str) -> bool {
        cmd_lower.starts_with("grep ") || cmd_lower.starts_with("cat ") || cmd_lower.starts_with("echo ") ||
        cmd_lower.starts_with("sudo ") || cmd_lower.starts_with("./") || cmd_lower.starts_with("../") ||
        cmd_lower.starts_with("man ") || cmd_lower.starts_with("which ") || cmd_lower.starts_with("ps ") ||
-       cmd_lower.starts_with("top") || cmd_lower.starts_with("htop") || cmd_lower.starts_with("df ") {
+       cmd_lower.starts_with("top") || cmd_lower.starts_with("htop") || cmd_lower.starts_with("df ") ||
+       cmd_lower.starts_with("open ") || cmd_lower == "open" || cmd_lower.starts_with("vim ") || 
+       cmd_lower.starts_with("nano ") || cmd_lower.starts_with("emacs ") || cmd_lower.starts_with("code ") ||
+       cmd_lower.starts_with("ssh ") || cmd_lower.starts_with("scp ") || cmd_lower.starts_with("curl ") ||
+       cmd_lower.starts_with("wget ") || cmd_lower.starts_with("brew ") || cmd_lower.starts_with("pip ") ||
+       cmd_lower.starts_with("python ") || cmd_lower.starts_with("node ") || cmd_lower.starts_with("java ") ||
+       cmd_lower.starts_with("rustc ") || cmd_lower.starts_with("gcc ") || cmd_lower.starts_with("clang ") ||
+       cmd_lower.starts_with("tar ") || cmd_lower.starts_with("unzip ") || cmd_lower.starts_with("zip ") ||
+       cmd_lower == "pwd" || cmd_lower == "ls" || cmd_lower == "clear" || cmd_lower == "exit" ||
+       cmd_lower == "history" || cmd_lower == "top" || cmd_lower == "htop" || cmd_lower == "whoami" ||
+       cmd_lower.starts_with("/") || cmd_lower.starts_with("~") {
         return false;
     }
     
@@ -168,14 +178,43 @@ fn is_natural_language_command(command: &str) -> bool {
     let words: Vec<&str> = cmd_lower.split_whitespace().collect();
     if words.len() > 1 {
         let first_word = words[0];
-        // List of common Unix commands
+        // Comprehensive list of Unix/macOS/Linux commands
         let unix_commands = [
+            // Core Unix commands
             "ls", "cd", "pwd", "mkdir", "rmdir", "rm", "cp", "mv", "ln", "find", "grep", "cat", "less", "more",
             "head", "tail", "sort", "uniq", "wc", "chmod", "chown", "ps", "top", "kill", "jobs", "bg", "fg",
             "nohup", "ssh", "scp", "rsync", "tar", "gzip", "gunzip", "zip", "unzip", "curl", "wget", "ping",
-            "traceroute", "netstat", "ifconfig", "iptables", "git", "npm", "cargo", "python", "node", "java",
-            "gcc", "make", "cmake", "docker", "kubectl", "sudo", "su", "whoami", "id", "groups", "history",
-            "alias", "which", "whereis", "locate", "man", "info", "help", "clear", "reset", "exit", "logout"
+            "traceroute", "netstat", "ifconfig", "iptables", "sudo", "su", "whoami", "id", "groups", "history",
+            "alias", "which", "whereis", "locate", "man", "info", "help", "clear", "reset", "exit", "logout",
+            // macOS specific commands
+            "open", "say", "osascript", "pbcopy", "pbpaste", "sw_vers", "system_profiler", "diskutil", "hdiutil",
+            "mdls", "mdfind", "spotlight", "launchctl", "scutil", "networksetup", "security", "keychain",
+            // Development tools
+            "git", "npm", "yarn", "pnpm", "cargo", "python", "python3", "node", "java", "javac", "rustc", 
+            "gcc", "clang", "g++", "make", "cmake", "autoconf", "automake", "libtool", "pkg-config",
+            // Package managers
+            "brew", "pip", "pip3", "pipx", "conda", "apt", "yum", "dnf", "pacman", "snap", "flatpak",
+            // Text editors
+            "vim", "vi", "nvim", "nano", "emacs", "code", "subl", "atom", "pico",
+            // System monitoring
+            "htop", "iotop", "nettop", "activity", "fs_usage", "dtruss", "ktrace", "iostat", "vmstat",
+            // Network tools
+            "nc", "netcat", "telnet", "ftp", "sftp", "rsync", "scp", "dig", "nslookup", "host", "whois",
+            // File operations
+            "file", "stat", "du", "df", "lsof", "fuser", "basename", "dirname", "realpath", "readlink",
+            // Process control
+            "pgrep", "pkill", "killall", "nohup", "screen", "tmux", "at", "crontab", "watch",
+            // Compression
+            "compress", "uncompress", "bzip2", "bunzip2", "xz", "unxz", "7z", "rar", "unrar",
+            // Database tools
+            "sqlite3", "mysql", "psql", "mongo", "redis-cli",
+            // Container tools
+            "docker", "podman", "kubectl", "helm", "docker-compose",
+            // Media tools
+            "ffmpeg", "imagemagick", "convert", "identify", "exiftool",
+            // Misc utilities
+            "awk", "sed", "tr", "cut", "paste", "join", "tee", "xargs", "parallel", "jq", "yq",
+            "base64", "uuencode", "uudecode", "hexdump", "od", "strings", "xxd"
         ];
         
         if !unix_commands.contains(&first_word) && words.len() >= 2 {
