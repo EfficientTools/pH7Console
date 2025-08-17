@@ -98,75 +98,75 @@ function App() {
   }
 
   return (
-    <div className="h-screen bg-terminal-bg flex">
-      {/* Sidebar with transition */}
-      <div className={`h-full transition-all duration-300 ease-in-out ${
-        sidebarVisible ? 'w-64 opacity-100' : 'w-0 opacity-0 overflow-hidden'
-      }`}>
-        <Sidebar />
-      </div>
-      
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col transition-all duration-300 ease-in-out">
-        {/* Header */}
-        <header className="bg-terminal-surface border-b border-terminal-border px-6 py-3 flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={() => {
-                setSidebarVisible(!sidebarVisible);
-                // Re-focus terminal after animation
-                setTimeout(() => {
-                  const terminalInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-                  if (terminalInput) {
-                    terminalInput.focus();
-                  }
-                }, 350);
-              }}
-              className="p-1 hover:bg-terminal-border rounded transition-colors"
-              title={sidebarVisible ? "Hide Sidebar (⌘B)" : "Show Sidebar (⌘B)"}
-            >
-              {sidebarVisible ? (
-                <PanelLeftClose className="w-4 h-4 text-terminal-muted" />
-              ) : (
-                <PanelLeftOpen className="w-4 h-4 text-terminal-muted" />
-              )}
-            </button>
-            <div className="ai-badge">pH7Console</div>
-            <div className="text-terminal-muted text-sm">
-              ML-First Terminal {aiModelLoaded && '• AI Ready'}
-            </div>
-          </div>
-          
-          <div className="flex items-center space-x-2">
-            {aiModelLoaded && (
-              <div className="flex items-center space-x-2">
-                <div className="w-2 h-2 bg-ai-primary rounded-full animate-pulse-soft"></div>
-                <span className="text-xs text-terminal-muted">Local AI Active</span>
-              </div>
+    <div className="h-screen bg-terminal-bg flex flex-col">
+      {/* Header */}
+      <header className="bg-terminal-surface border-b border-terminal-border px-6 py-3 flex items-center justify-between">
+        <div className="flex items-center space-x-3">
+          <button
+            onClick={() => {
+              setSidebarVisible(!sidebarVisible);
+              // Re-focus terminal after animation
+              setTimeout(() => {
+                const terminalInput = document.querySelector('input[type="text"]') as HTMLInputElement;
+                if (terminalInput) {
+                  terminalInput.focus();
+                }
+              }, 350);
+            }}
+            className="p-1 hover:bg-terminal-border rounded transition-colors"
+            title={sidebarVisible ? "Hide Sidebar (⌘B)" : "Show Sidebar (⌘B)"}
+          >
+            {sidebarVisible ? (
+              <PanelLeftClose className="w-4 h-4 text-terminal-muted" />
+            ) : (
+              <PanelLeftOpen className="w-4 h-4 text-terminal-muted" />
             )}
-            <button
-              onClick={() => {
-                setAiPanelVisible(!aiPanelVisible);
-                // Re-focus terminal after animation
-                setTimeout(() => {
-                  const terminalInput = document.querySelector('input[type="text"]') as HTMLInputElement;
-                  if (terminalInput) {
-                    terminalInput.focus();
-                  }
-                }, 350);
-              }}
-              className="p-1 hover:bg-terminal-border rounded transition-colors"
-              title={aiPanelVisible ? "Hide AI Panel (⌘J)" : "Show AI Panel (⌘J)"}
-            >
-              {aiPanelVisible ? (
-                <PanelRightClose className="w-4 h-4 text-terminal-muted" />
-              ) : (
-                <PanelRightOpen className="w-4 h-4 text-terminal-muted" />
-              )}
-            </button>
+          </button>
+          <div className="ai-badge">pH7Console</div>
+          <div className="text-terminal-muted text-sm">
+            ML-First Terminal {aiModelLoaded && '• AI Ready'}
           </div>
-        </header>
+        </div>
+        
+        <div className="flex items-center space-x-2">
+          {aiModelLoaded && (
+            <div className="flex items-center space-x-2">
+              <div className="w-2 h-2 bg-ai-primary rounded-full animate-pulse-soft"></div>
+              <span className="text-xs text-terminal-muted">Local AI Active</span>
+            </div>
+          )}
+          <button
+            onClick={() => {
+              setAiPanelVisible(!aiPanelVisible);
+              // Re-focus terminal after animation
+              setTimeout(() => {
+                const terminalInput = document.querySelector('input[type="text"]') as HTMLInputElement;
+                if (terminalInput) {
+                  terminalInput.focus();
+                }
+              }, 350);
+            }}
+            className="p-1 hover:bg-terminal-border rounded transition-colors"
+            title={aiPanelVisible ? "Hide AI Panel (⌘J)" : "Show AI Panel (⌘J)"}
+          >
+            {aiPanelVisible ? (
+              <PanelRightClose className="w-4 h-4 text-terminal-muted" />
+            ) : (
+              <PanelRightOpen className="w-4 h-4 text-terminal-muted" />
+            )}
+          </button>
+        </div>
+      </header>
 
+      {/* Main Content Area - Now flex-1 to take remaining height after header */}
+      <div className="flex-1 flex">
+        {/* Sidebar with transition */}
+        <div className={`h-full transition-all duration-300 ease-in-out ${
+          sidebarVisible ? 'w-64 opacity-100' : 'w-0 opacity-0 overflow-hidden'
+        }`}>
+          <Sidebar />
+        </div>
+        
         {/* Terminal and AI Panel */}
         <div className="flex-1 flex">
           {/* Terminal */}
