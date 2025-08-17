@@ -17,10 +17,10 @@ export const Terminal: React.FC = () => {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [historyCommands, setHistoryCommands] = useState<string[]>([]);
   const [originalInput, setOriginalInput] = useState('');
-  
+
   const inputRef = useRef<HTMLInputElement>(null);
   const terminalRef = useRef<HTMLDivElement>(null);
-  
+
   const {
     activeSession,
     commandHistory,
@@ -28,7 +28,7 @@ export const Terminal: React.FC = () => {
     clearHistory,
     isExecuting,
   } = useTerminalStore();
-  
+
   const {
     isModelLoaded,
     getCompletions,
@@ -66,31 +66,28 @@ export const Terminal: React.FC = () => {
       }
     };
 
-    // Focus immediately
     focusInput();
 
-    // Focus when the window becomes active
-    const handleWindowFocus = () => {
-      setTimeout(focusInput, 100); // Small delay to ensure DOM is ready
-    };
-
     // Focus when clicking anywhere in the terminal area
-    const handleTerminalClick = (e: MouseEvent) => {
-      const target = e.target as HTMLElement;
-      // Only focus if not clicking on a button or other interactive element
-      if (!target.closest('button') && !target.closest('input') && !target.closest('textarea')) {
-        focusInput();
-      }
+    const handleTerminalClick = () => {
+      focusInput();
     };
 
-    window.addEventListener('focus', handleWindowFocus);
-    document.addEventListener('click', handleTerminalClick);
+    const terminalElement = terminalRef.current;
+    if (terminalElement) {
+      terminalElement.addEventListener('click', handleTerminalClick);
+    }
+
+    // Focus when window regains focus
+    window.addEventListener('focus', focusInput);
 
     return () => {
-      window.removeEventListener('focus', handleWindowFocus);
-      document.removeEventListener('click', handleTerminalClick);
+      if (terminalElement) {
+        terminalElement.removeEventListener('click', handleTerminalClick);
+      }
+      window.removeEventListener('focus', focusInput);
     };
-  }, []);
+  }, [activeSession]);
 
   // Re-focus when activeSession changes
   useEffect(() => {
@@ -117,11 +114,11 @@ export const Terminal: React.FC = () => {
       'delete all', 'remove all', 'copy all', 'move all', 'create a',
       'make a', 'install the', 'update the', 'check the', 'run the'
     ];
-    
+
     const inputLower = input.toLowerCase();
     return naturalLanguageIndicators.some(indicator => inputLower.includes(indicator)) ||
-           (input.includes(' ') && !input.startsWith('/') && !input.startsWith('~') && 
-            Boolean(inputLower.match(/^[a-z\s]+$/))); // Contains only letters and spaces
+      (input.includes(' ') && !input.startsWith('/') && !input.startsWith('~') &&
+        Boolean(inputLower.match(/^[a-z\s]+$/))); // Contains only letters and spaces
   };
 
   const handleNaturalLanguageDetection = async (input: string) => {
@@ -129,7 +126,7 @@ export const Terminal: React.FC = () => {
       try {
         const context = commandHistory.slice(-3).map(cmd => cmd.command).join('; ');
         const response = await translateNaturalLanguage(input, context);
-        
+
         if (response.text && !response.text.startsWith('#')) {
           // Add natural language suggestion
           const nlSuggestion = {
@@ -139,9 +136,9 @@ export const Terminal: React.FC = () => {
             confidence: response.confidence,
             timestamp: Date.now(),
           };
-          
+
           addSuggestion(nlSuggestion);
-          
+
           // Auto-suggest this as a completion
           setCompletions([response.text]);
           setShowSuggestions(true);
@@ -190,7 +187,7 @@ export const Terminal: React.FC = () => {
       // Extract the last word (potential path) from input
       const parts = input.split(' ');
       const lastPart = parts[parts.length - 1];
-      
+
       const pathCompletions = await invoke<string[]>('get_path_completions', {
         sessionId: activeSession,
         partialPath: lastPart,
@@ -217,7 +214,10 @@ export const Terminal: React.FC = () => {
 
   // Arrow key navigation through command history
   const navigateHistory = (direction: 'up' | 'down') => {
-    if (historyCommands.length === 0) return;
+    if (historyCommands.length === 0) {
+      console.log('📚 No command history available for navigation');
+      return;
+    }
 
     if (direction === 'up') {
       if (historyIndex === -1) {
@@ -263,19 +263,19 @@ export const Terminal: React.FC = () => {
           setHistoryIndex(-1);
           setOriginalInput('');
           return;
-        
+
         case 'k': // Ctrl+K: Delete to end of line (ASCII 0x0B)
           e.preventDefault();
           const beforeCursor = inputValue.substring(0, cursorPos);
           setInput(beforeCursor);
           setTimeout(() => inputElement.setSelectionRange(cursorPos, cursorPos), 0);
           return;
-        
+
         case 'w': // Ctrl+W: Delete previous word (ASCII 0x17)
           e.preventDefault();
           const beforeCursorW = inputValue.substring(0, cursorPos);
           const afterCursorW = inputValue.substring(cursorPos);
-          
+
           // Find the start of the current word by looking backwards
           const wordMatch = beforeCursorW.match(/\S*\s*$/);
           if (wordMatch) {
@@ -285,12 +285,12 @@ export const Terminal: React.FC = () => {
             setTimeout(() => inputElement.setSelectionRange(newBeforeCursor.length, newBeforeCursor.length), 0);
           }
           return;
-        
+
         case 'l': // Ctrl+L: Clear screen (Form Feed - ASCII 0x0C)
           e.preventDefault();
           clearHistory();
           return;
-        
+
         case 'd': // Ctrl+D: Exit shell (EOT - ASCII 0x04)
           e.preventDefault();
           if (inputValue.trim() === '') {
@@ -299,7 +299,7 @@ export const Terminal: React.FC = () => {
             }
           }
           return;
-        
+
         case 'c': // Ctrl+C: Cancel current input (ETX - ASCII 0x03)
           e.preventDefault();
           setInput('');
@@ -307,7 +307,7 @@ export const Terminal: React.FC = () => {
           setOriginalInput('');
           setShowSuggestions(false);
           return;
-        
+
         case 'h': // Ctrl+H: Backspace (BS - ASCII 0x08)
           e.preventDefault();
           if (cursorPos > 0) {
@@ -316,7 +316,7 @@ export const Terminal: React.FC = () => {
             setTimeout(() => inputElement.setSelectionRange(cursorPos - 1, cursorPos - 1), 0);
           }
           return;
-        
+
         case 'r': // Ctrl+R: Reverse history search
           e.preventDefault();
           setShowHistoryModal(true);
@@ -339,7 +339,7 @@ export const Terminal: React.FC = () => {
             setTimeout(() => inputElement.setSelectionRange(0, 0), 0);
           }
           return;
-        
+
         case 'ArrowRight': // Alt+Right: Move cursor forward by word
           e.preventDefault();
           const afterCursorRight = inputValue.substring(cursorPos);
@@ -352,12 +352,12 @@ export const Terminal: React.FC = () => {
             setTimeout(() => inputElement.setSelectionRange(inputValue.length, inputValue.length), 0);
           }
           return;
-        
+
         case 'Backspace': // Alt+Backspace: Delete previous word
           e.preventDefault();
           const beforeCursorAltBS = inputValue.substring(0, cursorPos);
           const afterCursorAltBS = inputValue.substring(cursorPos);
-          
+
           const wordMatchAlt = beforeCursorAltBS.match(/\S+\s*$/);
           if (wordMatchAlt) {
             const newBeforeCursor = beforeCursorAltBS.substring(0, beforeCursorAltBS.length - wordMatchAlt[0].length);
@@ -375,39 +375,39 @@ export const Terminal: React.FC = () => {
         e.preventDefault();
         handleExecuteCommand();
         break;
-      
+
       case 'Tab':
         e.preventDefault();
         handleTabCompletion();
         break;
-      
+
       case 'ArrowUp':
         e.preventDefault();
         if (showSuggestions) {
-          setSelectedCompletion((prev) => 
+          setSelectedCompletion((prev) =>
             prev > 0 ? prev - 1 : completions.length - 1
           );
         } else {
           navigateHistory('up');
         }
         break;
-      
+
       case 'ArrowDown':
         e.preventDefault();
         if (showSuggestions) {
-          setSelectedCompletion((prev) => 
+          setSelectedCompletion((prev) =>
             prev < completions.length - 1 ? prev + 1 : 0
           );
         } else {
           navigateHistory('down');
         }
         break;
-      
+
       case 'ArrowLeft':
       case 'ArrowRight':
         // Allow normal cursor movement (don't prevent default)
         break;
-      
+
       case 'Escape':
         e.preventDefault();
         setShowSuggestions(false);
@@ -431,7 +431,7 @@ export const Terminal: React.FC = () => {
   // Handle command explanation on hover
   const handleCommandHover = async (command: string) => {
     if (hoveredCommand === command || !isModelLoaded) return;
-    
+
     setHoveredCommand(command);
     try {
       const explanation = await explainCommand(command);
@@ -448,7 +448,7 @@ export const Terminal: React.FC = () => {
 
   const handleExecuteCommand = async () => {
     if (!input.trim() || isExecuting) return;
-    
+
     // Handle clear command specially - clear the display instead of executing it
     if (input.trim().toLowerCase() === 'clear') {
       clearHistory();
@@ -458,13 +458,25 @@ export const Terminal: React.FC = () => {
       setOriginalInput('');
       return;
     }
-    
+
     await executeCommand(input);
     setInput('');
     setShowSuggestions(false);
     setHistoryIndex(-1);
     setOriginalInput('');
-    
+
+    // Reload command history for navigation after executing a command
+    if (activeSession) {
+      try {
+        const history = await invoke<string[]>('get_command_history_for_navigation', {
+          sessionId: activeSession,
+        });
+        setHistoryCommands(history);
+      } catch (error) {
+        console.error('Failed to reload command history after execution:', error);
+      }
+    }
+
     // Get AI suggestions for next command
     if (isModelLoaded && activeSession) {
       await getSuggestions(`Last command: ${input}`);
@@ -474,7 +486,7 @@ export const Terminal: React.FC = () => {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newValue = e.target.value;
     setInput(newValue);
-    
+
     // Reset history navigation when user types
     if (historyIndex !== -1) {
       setHistoryIndex(-1);
@@ -548,17 +560,15 @@ export const Terminal: React.FC = () => {
               <span className="text-ai-primary font-medium">
                 {getCurrentPath()}
               </span>
-              <span className={`${
-                execution.exit_code !== undefined && execution.exit_code !== 0 
-                  ? 'text-red-400' 
+              <span className={`${execution.exit_code !== undefined && execution.exit_code !== 0
+                  ? 'text-red-400'
                   : 'text-terminal-muted'
-              }`}>$</span>
-              <span 
-                className={`cursor-pointer hover:text-ai-primary transition-colors ${
-                  execution.exit_code !== undefined && execution.exit_code !== 0
+                }`}>$</span>
+              <span
+                className={`cursor-pointer hover:text-ai-primary transition-colors ${execution.exit_code !== undefined && execution.exit_code !== 0
                     ? 'text-red-200'
                     : 'text-terminal-text'
-                }`}
+                  }`}
                 onMouseEnter={() => handleCommandHover(execution.command)}
                 onMouseLeave={handleCommandLeave}
                 title={isModelLoaded ? "Hover for AI explanation" : ""}
@@ -569,29 +579,26 @@ export const Terminal: React.FC = () => {
                 {formatTimestamp(execution.timestamp)}
               </span>
             </div>
-            
+
             {/* Output */}
             {execution.output && (
-              <div className={`command-output pl-4 border-l-2 ${
-                execution.exit_code !== undefined && execution.exit_code !== 0 
-                  ? 'border-red-400/50 bg-red-400/5' 
+              <div className={`command-output pl-4 border-l-2 ${execution.exit_code !== undefined && execution.exit_code !== 0
+                  ? 'border-red-400/50 bg-red-400/5'
                   : 'border-terminal-border'
-              }`}>
-                <pre className={`whitespace-pre-wrap ${
-                  execution.exit_code !== undefined && execution.exit_code !== 0
+                }`}>
+                <pre className={`whitespace-pre-wrap ${execution.exit_code !== undefined && execution.exit_code !== 0
                     ? 'text-red-200'
                     : ''
-                }`}>{execution.output}</pre>
+                  }`}>{execution.output}</pre>
               </div>
             )}
-            
+
             {/* Success/Error Indicator - Modern Style */}
             {execution.exit_code !== undefined && (
-              <div className={`flex items-center space-x-2 text-xs pl-4 mt-1 ${
-                execution.exit_code === 0 
-                  ? 'text-green-400' 
+              <div className={`flex items-center space-x-2 text-xs pl-4 mt-1 ${execution.exit_code === 0
+                  ? 'text-green-400'
                   : 'text-red-400'
-              }`}>
+                }`}>
                 {execution.exit_code === 0 ? (
                   <>
                     <span className="flex items-center space-x-1">
@@ -617,7 +624,7 @@ export const Terminal: React.FC = () => {
             )}
           </div>
         ))}
-        
+
         {/* Loading indicator */}
         {isExecuting && (
           <div className="flex items-center space-x-2 text-terminal-muted">
@@ -651,11 +658,10 @@ export const Terminal: React.FC = () => {
               {completions.map((completion, index) => (
                 <div
                   key={completion}
-                  className={`px-3 py-1 rounded cursor-pointer text-sm ${
-                    index === selectedCompletion
+                  className={`px-3 py-1 rounded cursor-pointer text-sm ${index === selectedCompletion
                       ? 'bg-ai-primary text-white'
                       : 'text-terminal-text hover:bg-terminal-border'
-                  }`}
+                    }`}
                   onClick={() => {
                     setInput(completion);
                     setShowSuggestions(false);
@@ -682,15 +688,15 @@ export const Terminal: React.FC = () => {
             onKeyDown={handleKeyDown}
             className="flex-1 terminal-input"
             placeholder={
-              historyCommands.length > 0 
-                ? "Type a command or natural language... (Use ↑↓ for history, try 'show me large files')" 
-                : isModelLoaded 
-                  ? "Type a command or describe what you want to do in plain English..." 
+              historyCommands.length > 0
+                ? "Type a command or natural language... (Use ↑↓ for history, try 'show me large files')"
+                : isModelLoaded
+                  ? "Type a command or describe what you want to do in plain English..."
                   : "Type a command..."
             }
             disabled={isExecuting}
           />
-          
+
           {isModelLoaded && (
             <div className="flex items-center space-x-1">
               <Zap className="w-4 h-4 text-ai-primary" />
@@ -698,7 +704,7 @@ export const Terminal: React.FC = () => {
             </div>
           )}
         </div>
-        
+
         {/* Quick Tips */}
         <div className="mt-2 text-xs text-terminal-muted">
           <div className="flex items-center space-x-4 flex-wrap">

@@ -43,13 +43,13 @@ export const Sidebar: React.FC = () => {
       // Let the default behavior happen for OS shortcuts
       return;
     }
-    
+
     // Allow arrow keys, delete, backspace, etc.
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Delete', 'Backspace', 'Home', 'End'].includes(e.key)) {
       // Let the default behavior happen for navigation keys
       return;
     }
-    
+
     if (e.key === 'Enter') {
       e.preventDefault();
       handleTitleSubmit(sessionId);
@@ -77,11 +77,11 @@ export const Sidebar: React.FC = () => {
       if (e.key === 'Enter' && !editingSessionId && activeSession) {
         // Check if the focus is not on an input, button, or other interactive element
         const activeElement = document.activeElement;
-        if (!activeElement || 
-            (activeElement.tagName !== 'INPUT' && 
-             activeElement.tagName !== 'BUTTON' && 
-             activeElement.tagName !== 'TEXTAREA' &&
-             !activeElement.hasAttribute('contenteditable'))) {
+        if (!activeElement ||
+          (activeElement.tagName !== 'INPUT' &&
+            activeElement.tagName !== 'BUTTON' &&
+            activeElement.tagName !== 'TEXTAREA' &&
+            !activeElement.hasAttribute('contenteditable'))) {
           e.preventDefault();
           const session = sessions.find(s => s.id === activeSession);
           if (session) {
@@ -89,34 +89,40 @@ export const Sidebar: React.FC = () => {
           }
         }
       }
-      
+
       // Handle arrow keys for session navigation
       if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !editingSessionId && sessions.length > 1) {
         const activeElement = document.activeElement;
-        if (!activeElement || 
-            (activeElement.tagName !== 'INPUT' && 
-             activeElement.tagName !== 'BUTTON' && 
-             activeElement.tagName !== 'TEXTAREA' &&
-             !activeElement.hasAttribute('contenteditable'))) {
-          e.preventDefault();
-          
-          const currentIndex = sessions.findIndex(s => s.id === activeSession);
-          if (currentIndex !== -1) {
-            let newIndex;
-            if (e.key === 'ArrowUp') {
-              newIndex = currentIndex > 0 ? currentIndex - 1 : sessions.length - 1;
-            } else {
-              newIndex = currentIndex < sessions.length - 1 ? currentIndex + 1 : 0;
-            }
-            setActiveSession(sessions[newIndex].id);
+
+        // NEVER capture arrow keys when focus is on input, textarea, or interactive elements
+        // This should be a simple, clear exclusion list
+        const isInputFocused = activeElement && (
+          activeElement.tagName === 'INPUT' ||
+          activeElement.tagName === 'TEXTAREA' ||
+          activeElement.tagName === 'BUTTON' ||
+          activeElement.tagName === 'SELECT' ||
+          activeElement.hasAttribute('contenteditable') ||
+          activeElement.closest('input, textarea, button, select, [contenteditable]')
+        );
+
+        e.preventDefault();
+
+        const currentIndex = sessions.findIndex(s => s.id === activeSession);
+        if (currentIndex !== -1) {
+          let newIndex;
+          if (e.key === 'ArrowUp') {
+            newIndex = currentIndex > 0 ? currentIndex - 1 : sessions.length - 1;
+          } else {
+            newIndex = currentIndex < sessions.length - 1 ? currentIndex + 1 : 0;
           }
+          setActiveSession(sessions[newIndex].id);
         }
       }
     };
 
-    document.addEventListener('keydown', handleGlobalKeyDown);
+    document.addEventListener('keydown', handleGlobalKeyDown, false); // Use bubble phase, not capture
     return () => {
-      document.removeEventListener('keydown', handleGlobalKeyDown);
+      document.removeEventListener('keydown', handleGlobalKeyDown, false);
     };
   }, [editingSessionId, activeSession, sessions, handleDoubleClick, setActiveSession]);
 
@@ -159,8 +165,8 @@ export const Sidebar: React.FC = () => {
                   onDoubleClick={() => handleDoubleClick(session)}
                   className={`
                     group flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors
-                    ${session.id === activeSession 
-                      ? 'bg-ai-primary text-white' 
+                    ${session.id === activeSession
+                      ? 'bg-ai-primary text-white'
                       : 'text-terminal-text hover:bg-terminal-border'
                     }
                   `}
@@ -181,21 +187,20 @@ export const Sidebar: React.FC = () => {
                           autoFocus
                         />
                       ) : (
-                        <div 
-                          className="font-medium truncate" 
+                        <div
+                          className="font-medium truncate"
                           title={`${session.title} - Press Enter to rename, ↑/↓ arrows to navigate`}
                         >
                           {session.title}
                         </div>
                       )}
-                      <div className={`text-xs truncate ${
-                        session.id === activeSession ? 'text-white/70' : 'text-terminal-muted'
-                      }`}>
+                      <div className={`text-xs truncate ${session.id === activeSession ? 'text-white/70' : 'text-terminal-muted'
+                        }`}>
                         {session.working_directory}
                       </div>
                     </div>
                   </div>
-                  
+
                   {sessions.length > 1 && (
                     <button
                       onClick={(e) => handleCloseSession(session.id, e)}
@@ -213,7 +218,7 @@ export const Sidebar: React.FC = () => {
 
         {/* Footer */}
         <div className="p-4 border-t border-terminal-border">
-          <button 
+          <button
             onClick={handleSettingsClick}
             className="w-full flex items-center space-x-2 p-2 text-terminal-muted hover:text-terminal-text hover:bg-terminal-border rounded transition-colors focus-ring"
           >
@@ -224,9 +229,9 @@ export const Sidebar: React.FC = () => {
       </div>
 
       {/* Settings Modal */}
-      <Settings 
-        isOpen={showSettings} 
-        onClose={() => setShowSettings(false)} 
+      <Settings
+        isOpen={showSettings}
+        onClose={() => setShowSettings(false)}
       />
     </>
   );
