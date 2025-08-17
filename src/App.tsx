@@ -159,7 +159,7 @@ function App() {
       </header>
 
       {/* Main Content Area - Now flex-1 to take remaining height after header */}
-      <div className="flex-1 flex">
+      <div className="flex-1 flex min-h-0">
         {/* Sidebar with transition */}
         <div className={`h-full transition-all duration-300 ease-in-out ${
           sidebarVisible ? 'w-64 opacity-100' : 'w-0 opacity-0 overflow-hidden'
@@ -168,9 +168,9 @@ function App() {
         </div>
         
         {/* Terminal and AI Panel */}
-        <div className="flex-1 flex">
+        <div className="flex-1 flex min-h-0">
           {/* Terminal */}
-          <div className="flex-1">
+          <div className="flex-1 min-h-0">
             <Terminal />
           </div>
           

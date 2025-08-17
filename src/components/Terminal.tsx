@@ -507,9 +507,9 @@ export const Terminal: React.FC = () => {
   }
 
   return (
-    <div className="h-full flex flex-col bg-terminal-bg">
+    <div className="h-full flex flex-col bg-terminal-bg min-h-0">
       {/* Header with History Toggle */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-terminal-border">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-terminal-border flex-shrink-0">
         <div className="flex items-center space-x-2">
           <TerminalIcon className="w-5 h-5 text-ai-primary" />
           <span className="text-sm font-medium text-terminal-text">
@@ -527,7 +527,7 @@ export const Terminal: React.FC = () => {
 
       {/* Command Explanation Tooltip */}
       {commandExplanation && hoveredCommand && (
-        <div className="mx-4 mt-2 p-3 bg-ai-primary/10 border border-ai-primary/20 rounded">
+        <div className="mx-4 mt-2 p-3 bg-ai-primary/10 border border-ai-primary/20 rounded flex-shrink-0">
           <div className="flex items-center space-x-2 mb-1">
             <Zap className="w-4 h-4 text-ai-primary" />
             <span className="text-xs font-medium text-ai-primary">Command Explanation</span>
@@ -537,9 +537,9 @@ export const Terminal: React.FC = () => {
       )}
 
       {/* Terminal Output */}
-      <div 
+      <div
         ref={terminalRef}
-        className="flex-1 overflow-y-auto p-4 space-y-2 font-mono text-sm"
+        className="flex-1 overflow-y-auto p-4 space-y-2 font-mono text-sm min-h-0"
       >
         {commandHistory.map((execution) => (
           <div key={execution.id} className="space-y-1">
@@ -639,7 +639,7 @@ export const Terminal: React.FC = () => {
       />
 
       {/* Input Area */}
-      <div className="border-t border-terminal-border p-4">
+      <div className="border-t border-terminal-border p-4 flex-shrink-0 bg-terminal-bg">
         {/* AI Suggestions */}
         {showSuggestions && completions.length > 0 && (
           <div className="mb-3 ai-suggestion">

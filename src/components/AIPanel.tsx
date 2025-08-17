@@ -168,9 +168,9 @@ export const AIPanel: React.FC = () => {
   };
 
   return (
-    <div className="h-full bg-terminal-surface flex flex-col">
+    <div className="h-full bg-terminal-surface flex flex-col min-h-0">
       {/* Header */}
-      <div className="p-4 border-b border-terminal-border">
+      <div className="p-4 border-b border-terminal-border flex-shrink-0">
         <div className="flex items-center space-x-2">
           <Brain className="w-5 h-5 text-ai-primary" />
           <h2 className="font-semibold text-terminal-text">AI Assistant</h2>
@@ -181,7 +181,7 @@ export const AIPanel: React.FC = () => {
       </div>
 
       {/* Natural Language Input */}
-      <div className="p-4 border-b border-terminal-border">
+      <div className="p-4 border-b border-terminal-border flex-shrink-0">
         <div className="space-y-3">
           <div className="flex items-center space-x-2">
             <MessageSquare className="w-4 h-4 text-ai-secondary" />
@@ -210,7 +210,7 @@ export const AIPanel: React.FC = () => {
       </div>
 
       {/* AI Suggestions */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-y-auto min-h-0">
         <div className="p-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center space-x-2">
