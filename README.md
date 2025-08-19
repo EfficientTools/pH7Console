@@ -214,7 +214,7 @@ npm run tauri build -- --target universal-apple-darwin
 
 **Platform-specific builds**:
 ```bash
-# Intel Macs only
+# Intel Macs only (Intel)
 npm run tauri build -- --target x86_64-apple-darwin
 
 # Apple Silicon only (M1/M2/M3)
