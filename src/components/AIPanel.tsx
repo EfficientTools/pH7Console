@@ -95,25 +95,18 @@ export const AIPanel: React.FC = () => {
       // Add suggestion ID to copied set
       setCopiedSuggestions(prev => new Set(prev).add(suggestion.id));
       
-      // Show temporary feedback message
-      const shortCommand = textToCopy.length > 30 ? textToCopy.substring(0, 30) + '...' : textToCopy;
-      setFeedbackMessage(`📋 Copied: "${shortCommand}"`);
-      
-      // Remove both the checkmark and message after 2 seconds
+      // Remove the checkmark after 2 seconds
       setTimeout(() => {
         setCopiedSuggestions(prev => {
           const newSet = new Set(prev);
           newSet.delete(suggestion.id);
           return newSet;
         });
-        setFeedbackMessage(null);
       }, 2000);
       
       console.log(`📋 Copied to clipboard: "${textToCopy}"`);
     } catch (error) {
       console.error('Failed to copy to clipboard:', error);
-      setFeedbackMessage('❌ Failed to copy to clipboard');
-      setTimeout(() => setFeedbackMessage(null), 2000);
     }
   };
 
