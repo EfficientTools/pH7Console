@@ -74,6 +74,8 @@ fn main() {
             commands::search_command_history,
             commands::store_command_in_history,
             commands::initialize_ml_system,
+            commands::get_repo_info,
+            commands::get_runtime_info,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

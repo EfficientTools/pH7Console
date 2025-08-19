@@ -519,6 +519,237 @@ pub async fn test_command() -> Result<String, String> {
     Ok("Test successful".to_string())
 }
 
+/// Repository information structure
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RepoInfo {
+    pub is_git_repo: bool,
+    pub branch: Option<String>,
+    pub repo_name: Option<String>,
+    pub remote_url: Option<String>,
+    pub has_changes: bool,
+    pub ahead_behind: Option<(i32, i32)>, // (ahead, behind)
+}
+
+/// Language/runtime information structure
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct RuntimeInfo {
+    pub node_version: Option<String>,
+    pub npm_version: Option<String>,
+    pub rust_version: Option<String>,
+    pub python_version: Option<String>,
+    pub git_version: Option<String>,
+}
+
+/// Get repository information for the current directory
+#[tauri::command]
+pub async fn get_repo_info(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<RepoInfo, String> {
+    let terminal_manager = state.inner().terminal_manager.lock().await;
+    
+    // Get current working directory for the session
+    let sessions = &terminal_manager.sessions;
+    let working_dir = if let Some(session) = sessions.get(&session_id) {
+        session.working_directory.clone()
+    } else {
+        std::env::current_dir()
+            .map_err(|e| e.to_string())?
+            .to_string_lossy()
+            .to_string()
+    };
+
+    let mut repo_info = RepoInfo {
+        is_git_repo: false,
+        branch: None,
+        repo_name: None,
+        remote_url: None,
+        has_changes: false,
+        ahead_behind: None,
+    };
+
+    // Check if we're in a git repository
+    let git_dir = std::path::Path::new(&working_dir).join(".git");
+    if git_dir.exists() || find_git_root(&working_dir).is_some() {
+        repo_info.is_git_repo = true;
+
+        // Get current branch
+        if let Ok(output) = std::process::Command::new("git")
+            .args(&["branch", "--show-current"])
+            .current_dir(&working_dir)
+            .output()
+        {
+            if output.status.success() {
+                let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !branch.is_empty() {
+                    repo_info.branch = Some(branch);
+                }
+            }
+        }
+
+        // Get repository name from remote URL
+        if let Ok(output) = std::process::Command::new("git")
+            .args(&["remote", "get-url", "origin"])
+            .current_dir(&working_dir)
+            .output()
+        {
+            if output.status.success() {
+                let remote_url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                repo_info.remote_url = Some(remote_url.clone());
+                
+                // Extract repo name from URL
+                if let Some(repo_name) = extract_repo_name(&remote_url) {
+                    repo_info.repo_name = Some(repo_name);
+                }
+            }
+        }
+
+        // Check for uncommitted changes
+        if let Ok(output) = std::process::Command::new("git")
+            .args(&["status", "--porcelain"])
+            .current_dir(&working_dir)
+            .output()
+        {
+            if output.status.success() {
+                let status_output = String::from_utf8_lossy(&output.stdout);
+                repo_info.has_changes = !status_output.trim().is_empty();
+            }
+        }
+
+        // Get ahead/behind information
+        if let Ok(output) = std::process::Command::new("git")
+            .args(&["rev-list", "--left-right", "--count", "HEAD...@{u}"])
+            .current_dir(&working_dir)
+            .output()
+        {
+            if output.status.success() {
+                let count_output = String::from_utf8_lossy(&output.stdout).trim();
+                if let Some((ahead, behind)) = parse_ahead_behind(count_output) {
+                    repo_info.ahead_behind = Some((ahead, behind));
+                }
+            }
+        }
+    }
+
+    Ok(repo_info)
+}
+
+/// Get runtime/language version information
+#[tauri::command]
+pub async fn get_runtime_info() -> Result<RuntimeInfo, String> {
+    let mut runtime_info = RuntimeInfo {
+        node_version: None,
+        npm_version: None,
+        rust_version: None,
+        python_version: None,
+        git_version: None,
+    };
+
+    // Get Node.js version
+    if let Ok(output) = std::process::Command::new("node").args(&["--version"]).output() {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            runtime_info.node_version = Some(version);
+        }
+    }
+
+    // Get npm version
+    if let Ok(output) = std::process::Command::new("npm").args(&["--version"]).output() {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            runtime_info.npm_version = Some(version);
+        }
+    }
+
+    // Get Rust version
+    if let Ok(output) = std::process::Command::new("rustc").args(&["--version"]).output() {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            runtime_info.rust_version = Some(version);
+        }
+    }
+
+    // Get Python version
+    if let Ok(output) = std::process::Command::new("python3").args(&["--version"]).output() {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            runtime_info.python_version = Some(version);
+        }
+    } else if let Ok(output) = std::process::Command::new("python").args(&["--version"]).output() {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            runtime_info.python_version = Some(version);
+        }
+    }
+
+    // Get Git version
+    if let Ok(output) = std::process::Command::new("git").args(&["--version"]).output() {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            runtime_info.git_version = Some(version);
+        }
+    }
+
+    Ok(runtime_info)
+}
+
+/// Helper function to find git root directory
+fn find_git_root(start_path: &str) -> Option<String> {
+    let mut current_path = std::path::Path::new(start_path);
+    
+    loop {
+        if current_path.join(".git").exists() {
+            return Some(current_path.to_string_lossy().to_string());
+        }
+        
+        if let Some(parent) = current_path.parent() {
+            current_path = parent;
+        } else {
+            break;
+        }
+    }
+    
+    None
+}
+
+/// Helper function to extract repository name from remote URL
+fn extract_repo_name(remote_url: &str) -> Option<String> {
+    if remote_url.is_empty() {
+        return None;
+    }
+
+    // Handle GitHub URLs (both HTTPS and SSH)
+    if let Some(captures) = regex::Regex::new(r"github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$")
+        .ok()?
+        .captures(remote_url)
+    {
+        let owner = captures.get(1)?.as_str();
+        let repo = captures.get(2)?.as_str();
+        return Some(format!("{}/{}", owner, repo));
+    }
+
+    // Handle other Git URLs
+    if let Some(captures) = regex::Regex::new(r"/([^/]+?)(?:\.git)?/?$")
+        .ok()?
+        .captures(remote_url)
+    {
+        return Some(captures.get(1)?.as_str().to_string());
+    }
+
+    None
+}
+
+/// Helper function to parse ahead/behind count
+fn parse_ahead_behind(output: &str) -> Option<(i32, i32)> {
+    let parts: Vec<&str> = output.split_whitespace().collect();
+    if parts.len() >= 2 {
+        if let (Ok(ahead), Ok(behind)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>()) {
+            return Some((ahead, behind));
+        }
+    }
+    None
+}
+
 /// Initialize the ML system
 #[tauri::command]
 pub async fn initialize_ml_system(
