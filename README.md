@@ -61,7 +61,7 @@ At the moment, it includes the following AI capabilities 🚀
 
 ## Technical Stack
 
-- **Frontend**: React 18 + TypeScript + Tailwind CSS
+- **Frontend**: React 18 + TypeScript + Tailwind CSS for styling
 - **Backend**: Rust (Tauri 2.0) for native performance  
 - **AI Runtime**: Candle ML framework (Rust-native)
 - **Terminal**: Cross-platform PTY with xterm.js
@@ -583,11 +583,12 @@ This comprehensive build and distribution setup ensures your pH7Console can reac
 
 3. **Start development** - Launch the terminal with AI capabilities
    ```bash
-   npm run tauri:dev
+   npm run tauri dev
    ```
 
-### Other Commands
+### Development Commands
 
+- `npm run tauri dev` - Start development server with hot reload
 - `npm run tauri:build` - Build for production (creates native binaries)
 - `npm run tauri:build -- --target universal-apple-darwin` - Build universal macOS binary
 - `npm run tauri:build -- --target x86_64-pc-windows-msvc` - Build for Windows
