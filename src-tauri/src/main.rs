@@ -72,6 +72,7 @@ fn main() {
             commands::get_path_completions,
             commands::get_command_history_for_navigation,
             commands::search_command_history,
+            commands::store_command_in_history,
             commands::initialize_ml_system,
         ])
         .run(tauri::generate_context!())

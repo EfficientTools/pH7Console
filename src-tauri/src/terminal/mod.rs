@@ -79,11 +79,21 @@ impl TerminalManager {
         session_id: &str,
         command: &str,
     ) -> Result<CommandExecution, Box<dyn std::error::Error + Send + Sync>> {
+        self.execute_command_with_history(session_id, command, command).await
+    }
+
+    /// Execute a command but store a different command in history (useful for natural language translation)
+    pub async fn execute_command_with_history(
+        &mut self,
+        session_id: &str,
+        command_to_execute: &str,
+        command_for_history: &str,
+    ) -> Result<CommandExecution, Box<dyn std::error::Error + Send + Sync>> {
         let start_time = std::time::Instant::now();
         let execution_id = Uuid::new_v4().to_string();
         
-        // Parse command and arguments
-        let parts: Vec<&str> = command.split_whitespace().collect();
+        // Parse command and arguments for execution
+        let parts: Vec<&str> = command_to_execute.split_whitespace().collect();
         if parts.is_empty() {
             return Err("Empty command".into());
         }
@@ -94,14 +104,24 @@ impl TerminalManager {
         // Handle built-in commands
         if let Some(result) = self.handle_builtin_command(session_id, cmd, args).await? {
             let duration = start_time.elapsed();
-            return Ok(CommandExecution {
+            let execution = CommandExecution {
                 id: execution_id,
-                command: command.to_string(),
+                command: command_for_history.to_string(), // Store the original command in history
                 output: result.0,
                 exit_code: Some(result.1),
                 duration_ms: duration.as_millis() as u64,
                 timestamp: chrono::Utc::now(),
-            });
+            };
+            
+            // IMPORTANT: Add built-in commands to history too!
+            self.command_history.push(execution.clone());
+            
+            // Limit history size
+            if self.command_history.len() > 1000 {
+                self.command_history.remove(0);
+            }
+            
+            return Ok(execution);
         }
         
         // Set working directory and environment if session exists
@@ -128,7 +148,7 @@ impl TerminalManager {
                     (combined, exit_code)
                 } else {
                     // Error case - enhance the error message
-                    let enhanced_error = self.enhance_error_message(command, &stderr, exit_code);
+                    let enhanced_error = self.enhance_error_message(command_to_execute, &stderr, exit_code);
                     let combined = if stdout.is_empty() {
                         enhanced_error
                     } else {
@@ -138,7 +158,7 @@ impl TerminalManager {
                 }
             },
             Err(e) => {
-                let enhanced_error = self.enhance_error_message(command, &e.to_string(), Some(1));
+                let enhanced_error = self.enhance_error_message(command_to_execute, &e.to_string(), Some(1));
                 (enhanced_error, Some(1))
             }
         };
@@ -152,7 +172,7 @@ impl TerminalManager {
         
         let execution = CommandExecution {
             id: execution_id,
-            command: command.to_string(),
+            command: command_for_history.to_string(), // Store the original command in history
             output,
             exit_code,
             duration_ms: duration.as_millis() as u64,
@@ -692,5 +712,27 @@ impl TerminalManager {
             .map(|cmd| cmd.command.clone())
             .take(10) // Limit to 10 results
             .collect()
+    }
+
+    /// Store a command in history without executing it (for natural language commands)
+    pub fn store_command_in_history(&mut self, _session_id: &str, command: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        // Create a minimal command execution entry for history storage
+        let execution = CommandExecution {
+            id: uuid::Uuid::new_v4().to_string(),
+            command: command.to_string(),
+            output: String::new(), // Empty output since this is just for history tracking
+            exit_code: Some(0), // Mark as successful since it's just being stored
+            duration_ms: 0, // No actual execution time
+            timestamp: chrono::Utc::now(),
+        };
+
+        self.command_history.push(execution);
+        
+        // Keep only the last 1000 commands
+        if self.command_history.len() > 1000 {
+            self.command_history.remove(0);
+        }
+        
+        Ok(())
     }
 }

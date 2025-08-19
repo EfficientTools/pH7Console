@@ -1,7 +1,7 @@
 import React from 'react';
 import { useAIStore } from '../store/aiStore';
 import { useTerminalStore } from '../store/terminalStore';
-import { Brain, Lightbulb, AlertCircle, Zap, MessageSquare, ThumbsUp, ThumbsDown, Copy } from 'lucide-react';
+import { Brain, Lightbulb, AlertCircle, Zap, MessageSquare, ThumbsUp, ThumbsDown, Copy, Check } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 
 export const AIPanel: React.FC = () => {
@@ -18,6 +18,8 @@ export const AIPanel: React.FC = () => {
   const { activeSession, commandHistory } = useTerminalStore();
   const [naturalLanguageInput, setNaturalLanguageInput] = React.useState('');
   const [quickActionLoading, setQuickActionLoading] = React.useState<string | null>(null);
+  const [feedbackMessage, setFeedbackMessage] = React.useState<string | null>(null);
+  const [copiedSuggestions, setCopiedSuggestions] = React.useState<Set<string>>(new Set());
 
   const handleNaturalLanguageSubmit = async () => {
     if (!naturalLanguageInput.trim() || !activeSession) return;
@@ -71,8 +73,65 @@ export const AIPanel: React.FC = () => {
     setNaturalLanguageInput('');
   };
 
+  const handleCopy = async (suggestion: any) => {
+    try {
+      // Extract the actual command from the suggestion content
+      let textToCopy = suggestion.content;
+      
+      if (suggestion.content.includes('→')) {
+        // Natural language → command format
+        textToCopy = suggestion.content.split('→ ')[1] || suggestion.content;
+      } else if (suggestion.content.startsWith('💡')) {
+        // Remove emoji prefix
+        textToCopy = suggestion.content.replace('💡 Natural Language → Command: ', '');
+      }
+      
+      // Clean up any remaining formatting
+      textToCopy = textToCopy.trim();
+      
+      // Copy to clipboard
+      await navigator.clipboard.writeText(textToCopy);
+      
+      // Add suggestion ID to copied set
+      setCopiedSuggestions(prev => new Set(prev).add(suggestion.id));
+      
+      // Show temporary feedback message
+      const shortCommand = textToCopy.length > 30 ? textToCopy.substring(0, 30) + '...' : textToCopy;
+      setFeedbackMessage(`📋 Copied: "${shortCommand}"`);
+      
+      // Remove both the checkmark and message after 2 seconds
+      setTimeout(() => {
+        setCopiedSuggestions(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(suggestion.id);
+          return newSet;
+        });
+        setFeedbackMessage(null);
+      }, 2000);
+      
+      console.log(`📋 Copied to clipboard: "${textToCopy}"`);
+    } catch (error) {
+      console.error('Failed to copy to clipboard:', error);
+      setFeedbackMessage('❌ Failed to copy to clipboard');
+      setTimeout(() => setFeedbackMessage(null), 2000);
+    }
+  };
+
+  const handleFeedback = async (suggestion: any, isPositive: boolean) => {
+    try {
+      await updateFeedback(suggestion.id, suggestion.content, isPositive ? 1.0 : 0.0);
+      
+      // Show temporary feedback message
+      setFeedbackMessage(isPositive ? 'Thanks! This helps the AI learn 👍' : 'Thanks for the feedback 👎');
+      setTimeout(() => setFeedbackMessage(null), 2000);
+    } catch (error) {
+      console.error('Feedback error:', error);
+      setFeedbackMessage('Feedback failed to save');
+      setTimeout(() => setFeedbackMessage(null), 2000);
+    }
+  };
+
   const handleQuickAction = async (action: 'explain' | 'fix' | 'optimize' | 'analyze') => {
-    if (!activeSession || commandHistory.length === 0) return;
 
     const lastCommand = commandHistory[commandHistory.length - 1];
     if (!lastCommand) return;
@@ -178,6 +237,13 @@ export const AIPanel: React.FC = () => {
             <div className="w-2 h-2 bg-ai-primary rounded-full animate-pulse-soft ml-auto"></div>
           )}
         </div>
+        
+        {/* Feedback Message */}
+        {feedbackMessage && (
+          <div className="mt-2 p-2 bg-ai-primary/20 border border-ai-primary/30 rounded-md text-xs text-ai-primary animate-fade-in">
+            {feedbackMessage}
+          </div>
+        )}
       </div>
 
       {/* Natural Language Input */}
@@ -257,15 +323,19 @@ export const AIPanel: React.FC = () => {
                       </span>
                       {suggestion.type === 'command' && (
                         <button
-                          onClick={() => {
-                            navigator.clipboard.writeText(suggestion.content.includes('→') 
-                              ? suggestion.content.split('→ ')[1] 
-                              : suggestion.content);
-                          }}
-                          className="p-1 hover:bg-ai-primary/20 rounded transition-colors"
-                          title="Copy command"
+                          onClick={() => handleCopy(suggestion)}
+                          className={`p-1 rounded transition-all duration-200 relative ${
+                            copiedSuggestions.has(suggestion.id)
+                              ? 'bg-ai-primary/30 shadow-sm border border-ai-primary/40 animate-pulse-once'
+                              : 'hover:bg-ai-primary/20 hover:scale-105'
+                          }`}
+                          title={copiedSuggestions.has(suggestion.id) ? 'Copied to clipboard!' : 'Copy command to clipboard'}
                         >
-                          <Copy className="w-3 h-3 text-ai-primary" />
+                          {copiedSuggestions.has(suggestion.id) ? (
+                            <Check className="w-3 h-3 text-green-400 animate-fade-in" />
+                          ) : (
+                            <Copy className="w-3 h-3 text-ai-primary transition-transform" />
+                          )}
                         </button>
                       )}
                     </div>
@@ -283,18 +353,40 @@ export const AIPanel: React.FC = () => {
                     {/* Feedback buttons for learning */}
                     <div className="flex items-center space-x-1">
                       <button
-                        onClick={() => updateFeedback(suggestion.content, 1.0)}
-                        className="p-1 hover:bg-green-500/20 rounded transition-colors"
-                        title="This was helpful"
+                        onClick={() => handleFeedback(suggestion, true)}
+                        className={`p-1 rounded transition-all duration-200 ${
+                          suggestion.feedback === 'positive' 
+                            ? 'bg-green-500/40 shadow-sm border border-green-400/30' 
+                            : 'hover:bg-green-500/20'
+                        }`}
+                        title={suggestion.feedback === 'positive' ? 'You marked this as helpful' : 'Mark as helpful'}
                       >
-                        <ThumbsUp className="w-3 h-3 text-green-400" />
+                        <ThumbsUp 
+                          className={`w-3 h-3 transition-all duration-200 ${
+                            suggestion.feedback === 'positive' 
+                              ? 'text-green-300 drop-shadow-sm' 
+                              : 'text-green-400'
+                          }`} 
+                          fill={suggestion.feedback === 'positive' ? 'currentColor' : 'none'}
+                        />
                       </button>
                       <button
-                        onClick={() => updateFeedback(suggestion.content, 0.0)}
-                        className="p-1 hover:bg-red-500/20 rounded transition-colors"
-                        title="This was not helpful"
+                        onClick={() => handleFeedback(suggestion, false)}
+                        className={`p-1 rounded transition-all duration-200 ${
+                          suggestion.feedback === 'negative' 
+                            ? 'bg-red-500/40 shadow-sm border border-red-400/30' 
+                            : 'hover:bg-red-500/20'
+                        }`}
+                        title={suggestion.feedback === 'negative' ? 'You marked this as not helpful' : 'Mark as not helpful'}
                       >
-                        <ThumbsDown className="w-3 h-3 text-red-400" />
+                        <ThumbsDown 
+                          className={`w-3 h-3 transition-all duration-200 ${
+                            suggestion.feedback === 'negative' 
+                              ? 'text-red-300 drop-shadow-sm' 
+                              : 'text-red-400'
+                          }`} 
+                          fill={suggestion.feedback === 'negative' ? 'currentColor' : 'none'}
+                        />
                       </button>
                     </div>
                   </div>

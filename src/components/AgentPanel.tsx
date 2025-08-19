@@ -121,7 +121,7 @@ export const AgentPanel: React.FC = () => {
       {!isAgentMode ? (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center max-w-sm">
-            <Robot className="w-12 h-12 mx-auto mb-4 text-terminal-muted opacity-50" />
+            <Bot className="w-12 h-12 mx-auto mb-4 text-terminal-muted opacity-50" />
             <h3 className="text-lg font-medium text-terminal-text mb-2">
               Autonomous Agent Mode
             </h3>
@@ -175,7 +175,7 @@ export const AgentPanel: React.FC = () => {
 
               {activeTasks.length === 0 ? (
                 <div className="text-center py-8">
-                  <Robot className="w-8 h-8 mx-auto text-terminal-muted mb-2 opacity-50" />
+                  <Bot className="w-8 h-8 mx-auto text-terminal-muted mb-2 opacity-50" />
                   <p className="text-sm text-terminal-muted">
                     No active tasks. Create a task above to get started.
                   </p>

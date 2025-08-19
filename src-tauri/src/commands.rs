@@ -78,9 +78,18 @@ pub async fn execute_command(
         command.clone()
     };
     
-    let result = terminal_manager.execute_command(&session_id, &actual_command)
-        .await
-        .map_err(|e| e.to_string());
+    // Execute the command - use special method for natural language to preserve original in history
+    let result = if is_natural_language_command(&command) && actual_command != command {
+        // For natural language commands, execute the translated command but store original in history
+        terminal_manager.execute_command_with_history(&session_id, &actual_command, &command)
+            .await
+            .map_err(|e| e.to_string())
+    } else {
+        // For regular commands, use normal execution
+        terminal_manager.execute_command(&session_id, &actual_command)
+            .await
+            .map_err(|e| e.to_string())
+    };
 
     // Learn from this command execution
     if let Ok(execution) = &result {
@@ -491,6 +500,18 @@ pub async fn search_command_history(
 ) -> Result<Vec<String>, String> {
     let terminal_manager = state.inner().terminal_manager.lock().await;
     Ok(terminal_manager.search_command_history(&pattern))
+}
+
+/// Store a command in history without executing it (for natural language commands)
+#[tauri::command]
+pub async fn store_command_in_history(
+    state: State<'_, AppState>,
+    session_id: String,
+    command: String,
+) -> Result<(), String> {
+    let mut terminal_manager = state.inner().terminal_manager.lock().await;
+    terminal_manager.store_command_in_history(&session_id, &command)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]

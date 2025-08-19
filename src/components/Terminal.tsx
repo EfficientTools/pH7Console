@@ -11,6 +11,7 @@ export const Terminal: React.FC = () => {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [completions, setCompletions] = useState<string[]>([]);
   const [selectedCompletion, setSelectedCompletion] = useState(0);
+  const [originalNaturalLanguage, setOriginalNaturalLanguage] = useState<string | null>(null);
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [hoveredCommand, setHoveredCommand] = useState<string | null>(null);
   const [commandExplanation, setCommandExplanation] = useState<string | null>(null);
@@ -46,6 +47,7 @@ export const Terminal: React.FC = () => {
           const history = await invoke<string[]>('get_command_history_for_navigation', {
             sessionId: activeSession,
           });
+
           // Backend already returns in reverse chronological order (most recent first)
           setHistoryCommands(history);
         } catch (error) {
@@ -116,9 +118,11 @@ export const Terminal: React.FC = () => {
     ];
 
     const inputLower = input.toLowerCase();
-    return naturalLanguageIndicators.some(indicator => inputLower.includes(indicator)) ||
+    const isNL = naturalLanguageIndicators.some(indicator => inputLower.includes(indicator)) ||
       (input.includes(' ') && !input.startsWith('/') && !input.startsWith('~') &&
         Boolean(inputLower.match(/^[a-z\s]+$/))); // Contains only letters and spaces
+
+    return isNL;
   };
 
   const handleNaturalLanguageDetection = async (input: string) => {
@@ -128,11 +132,17 @@ export const Terminal: React.FC = () => {
         const response = await translateNaturalLanguage(input, context);
 
         if (response.text && !response.text.startsWith('#')) {
+          // Clean up the response text (remove emoji prefixes if any)
+          let cleanCommand = response.text.replace(/^🤖\s*/, '').trim();
+
+          // Store the original natural language input for later use
+          setOriginalNaturalLanguage(input);
+
           // Add natural language suggestion
           const nlSuggestion = {
             id: Date.now().toString(),
             type: 'command' as const,
-            content: response.text,
+            content: cleanCommand,
             confidence: response.confidence,
             timestamp: Date.now(),
           };
@@ -140,7 +150,7 @@ export const Terminal: React.FC = () => {
           addSuggestion(nlSuggestion);
 
           // Auto-suggest this as a completion
-          setCompletions([response.text]);
+          setCompletions([cleanCommand]);
           setShowSuggestions(true);
           setSelectedCompletion(0);
         }
@@ -176,8 +186,23 @@ export const Terminal: React.FC = () => {
   // Tab completion for file paths
   const handleTabCompletion = async () => {
     if (showSuggestions && completions.length > 0) {
-      setInput(completions[selectedCompletion]);
+      const selectedCommand = completions[selectedCompletion];
+
+      // If we have an original natural language command, store it in history first
+      if (originalNaturalLanguage && activeSession) {
+        try {
+          await invoke('store_command_in_history', {
+            sessionId: activeSession,
+            command: originalNaturalLanguage,
+          });
+        } catch (error) {
+          console.error('Failed to store natural language command in history:', error);
+        }
+      }
+
+      setInput(selectedCommand);
       setShowSuggestions(false);
+      setOriginalNaturalLanguage(null); // Clear the stored original command
       return;
     }
 
@@ -411,6 +436,7 @@ export const Terminal: React.FC = () => {
       case 'Escape':
         e.preventDefault();
         setShowSuggestions(false);
+        setOriginalNaturalLanguage(null); // Clear stored natural language command
         setShowHistoryModal(false);
         setCommandExplanation(null);
         if (historyIndex !== -1) {
@@ -460,6 +486,7 @@ export const Terminal: React.FC = () => {
     }
 
     await executeCommand(input);
+
     setInput('');
     setShowSuggestions(false);
     setHistoryIndex(-1);
@@ -470,6 +497,11 @@ export const Terminal: React.FC = () => {
       try {
         const history = await invoke<string[]>('get_command_history_for_navigation', {
           sessionId: activeSession,
+        });
+        console.log('🔄 Reloaded command history after execution:', {
+          command: input,
+          newHistoryCount: history.length,
+          latestCommands: history.slice(0, 3)
         });
         setHistoryCommands(history);
       } catch (error) {
@@ -491,6 +523,11 @@ export const Terminal: React.FC = () => {
     if (historyIndex !== -1) {
       setHistoryIndex(-1);
       setOriginalInput('');
+    }
+
+    // Clear natural language state if user manually edits the input
+    if (originalNaturalLanguage) {
+      setOriginalNaturalLanguage(null);
     }
   };
 
@@ -519,7 +556,7 @@ export const Terminal: React.FC = () => {
   }
 
   return (
-    <div className="h-full flex flex-col bg-terminal-bg min-h-0">
+    <div className="h-full flex flex-col bg-terminal-bg min-h-0 terminal">
       {/* Header with History Toggle */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-terminal-border flex-shrink-0">
         <div className="flex items-center space-x-2">

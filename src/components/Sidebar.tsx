@@ -73,6 +73,17 @@ export const Sidebar: React.FC = () => {
   // Handle global keyboard events for editing active session
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // FIRST: Check if ANY input field has focus and skip ALL arrow key handling
+      if ((e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+        const activeElement = document.activeElement;
+        
+        // If ANY input or textarea is focused, completely ignore arrow keys
+        if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+          console.log('🔇 Sidebar: Input detected, completely ignoring arrow key:', e.key);
+          return; // Exit immediately, don't process any arrow key logic
+        }
+      }
+
       // Handle Enter key for editing active session
       if (e.key === 'Enter' && !editingSessionId && activeSession) {
         // Check if the focus is not on an input, button, or other interactive element
@@ -93,19 +104,37 @@ export const Sidebar: React.FC = () => {
       // Handle arrow keys for session navigation
       if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !editingSessionId && sessions.length > 1) {
         const activeElement = document.activeElement;
-
-        // NEVER capture arrow keys when focus is on input, textarea, or interactive elements
-        // This should be a simple, clear exclusion list
-        const isInputFocused = activeElement && (
-          activeElement.tagName === 'INPUT' ||
-          activeElement.tagName === 'TEXTAREA' ||
-          activeElement.tagName === 'BUTTON' ||
-          activeElement.tagName === 'SELECT' ||
-          activeElement.hasAttribute('contenteditable') ||
-          activeElement.closest('input, textarea, button, select, [contenteditable]')
+        
+        // Debug: Always log arrow key events
+        console.log('🔍 Sidebar received arrow key:', {
+          key: e.key,
+          activeElement: activeElement?.tagName,
+          classList: activeElement?.className || 'none',
+          id: activeElement?.id || 'none'
+        });
+        
+        // VERY specific check for terminal input - be extremely conservative
+        const isTerminalInput = activeElement && (
+          activeElement.classList.contains('terminal-input') ||
+          activeElement.tagName === 'INPUT' && activeElement.closest('.terminal')
         );
-
+        
+        console.log('🎯 Terminal input check:', {
+          isTerminalInput,
+          hasTerminalInputClass: activeElement?.classList.contains('terminal-input'),
+          isInputInTerminal: activeElement?.tagName === 'INPUT' && !!activeElement.closest('.terminal')
+        });
+        
+        // If terminal input is focused, NEVER interfere with arrow keys
+        if (isTerminalInput) {
+          console.log('✅ Sidebar: Terminal input detected - allowing arrow keys to pass through');
+          return; // Don't prevent default, don't capture - let Terminal handle it
+        }
+        
+        // Only capture if we're sure it's NOT terminal input
+        console.log('🚫 Sidebar: Capturing arrow key for session navigation');
         e.preventDefault();
+        e.stopPropagation(); // Stop event from continuing
 
         const currentIndex = sessions.findIndex(s => s.id === activeSession);
         if (currentIndex !== -1) {

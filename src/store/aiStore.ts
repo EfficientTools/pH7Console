@@ -13,6 +13,7 @@ interface AISuggestion {
   content: string;
   confidence: number;
   timestamp: number;
+  feedback?: 'positive' | 'negative' | null; // Track user feedback
 }
 
 interface AIState {
@@ -20,7 +21,7 @@ interface AIState {
   suggestions: AISuggestion[];
   currentAnalysis: string | null;
   isProcessing: boolean;
-  
+
   // Actions
   loadModel: () => Promise<void>;
   getSuggestions: (context: string, intent?: string) => Promise<void>;
@@ -31,11 +32,11 @@ interface AIState {
   translateNaturalLanguage: (text: string, context: string) => Promise<AIResponse>;
   addSuggestion: (suggestion: AISuggestion) => void;
   clearSuggestions: () => void;
-  
+
   // Learning features
-  updateFeedback: (command: string, feedback: number) => Promise<void>;
+  updateFeedback: (suggestionId: string, command: string, feedback: number) => Promise<void>;
   getUserAnalytics: () => Promise<UserAnalytics | null>;
-  
+
   // Agent mode
   createAgentTask: (description: string) => Promise<string>;
   getAgentTaskStatus: (taskId: string) => Promise<string | null>;
@@ -71,7 +72,7 @@ export const useAIStore = create<AIState>((set, get) => ({
 
   getSuggestions: async (context: string, intent?: string) => {
     if (!get().isModelLoaded) return;
-    
+
     set({ isProcessing: true });
     try {
       const response = await invoke<AIResponse>('ai_suggest_command', {
@@ -144,14 +145,14 @@ export const useAIStore = create<AIState>((set, get) => ({
     if (!get().isModelLoaded) {
       return { text: 'AI model not loaded', confidence: 0 };
     }
-    
+
     set({ isProcessing: true });
     try {
       const response = await invoke<AIResponse>('ai_translate_natural_language', {
         naturalLanguage: text,
         context,
       });
-      
+
       // Add as a suggestion if it's a valid command
       if (response.text && !response.text.startsWith('#') && !response.text.includes('need more')) {
         const suggestion: AISuggestion = {
@@ -161,7 +162,7 @@ export const useAIStore = create<AIState>((set, get) => ({
           confidence: response.confidence,
           timestamp: Date.now(),
         };
-        
+
         set(state => ({
           suggestions: [...state.suggestions, suggestion],
           isProcessing: false,
@@ -169,7 +170,7 @@ export const useAIStore = create<AIState>((set, get) => ({
       } else {
         set({ isProcessing: false });
       }
-      
+
       return response;
     } catch (error) {
       console.error('Failed to translate natural language:', error);
@@ -188,9 +189,37 @@ export const useAIStore = create<AIState>((set, get) => ({
     set({ suggestions: [] });
   },
 
-  updateFeedback: async (command: string, feedback: number) => {
+  updateFeedback: async (suggestionId: string, command: string, feedback: number) => {
     try {
-      await invoke('update_ai_feedback', { command, feedback });
+      // Extract the actual command from the suggestion content
+      let actualCommand = command;
+
+      // Handle different suggestion formats
+      if (command.includes('→')) {
+        // Natural language → command format
+        actualCommand = command.split('→ ')[1] || command;
+      } else if (command.startsWith('💡')) {
+        // Remove emoji prefix
+        actualCommand = command.replace('💡 Natural Language → Command: ', '');
+      }
+
+      // Clean up any remaining formatting
+      actualCommand = actualCommand.trim();
+
+      // Update the backend AI model with feedback
+      await invoke('update_ai_feedback', { command: actualCommand, feedback });
+
+      // Update the local suggestion state to show feedback visually
+      set(state => ({
+        suggestions: state.suggestions.map(suggestion =>
+          suggestion.id === suggestionId
+            ? {
+              ...suggestion,
+              feedback: feedback > 0.5 ? 'positive' : 'negative' as 'positive' | 'negative'
+            }
+            : suggestion
+        )
+      }));
     } catch (error) {
       console.error('Failed to update feedback:', error);
     }
