@@ -157,6 +157,8 @@ config.local.json
 *.jsonl
 /user_patterns/
 /command_history.encrypted
+/src-tauri/ai_data/
+test_ml_system.html
 
 # === Platform Specific Builds ===
 /binaries/
