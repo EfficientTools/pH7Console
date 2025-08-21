@@ -1,13 +1,27 @@
 import React, { useState, useEffect } from 'react';
 import { useTerminalStore } from '../store/terminalStore';
-import { Terminal, Plus, X, Settings as SettingsIcon } from 'lucide-react';
+import { Terminal, Plus, X, Settings as SettingsIcon, Folder } from 'lucide-react';
 import { Settings } from './Settings';
+import { FileExplorer } from './FileExplorer';
 
 export const Sidebar: React.FC = () => {
   const { sessions, activeSession, setActiveSession, createSession, closeSession, updateSessionTitle } = useTerminalStore();
   const [showSettings, setShowSettings] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
+  const [activeTab, setActiveTab] = useState<'terminals' | 'explorer'>('terminals');
+  const [currentExplorerPath, setCurrentExplorerPath] = useState('/Users/pierre-ai-engineer/Code/pH7Console');
+
+  // Debug: Log important state values
+  useEffect(() => {
+    console.log(`🔧 Sidebar State Debug:`, {
+      activeTab,
+      currentExplorerPath,
+      activeSession,
+      hasActiveSession: !!activeSession,
+      sessionsCount: sessions.length
+    });
+  }, [activeTab, currentExplorerPath, activeSession, sessions]);
 
   const handleCreateSession = async () => {
     // Generate a unique name based on session count
@@ -105,14 +119,6 @@ export const Sidebar: React.FC = () => {
       if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && !editingSessionId && sessions.length > 1) {
         const activeElement = document.activeElement;
         
-        // Debug: Always log arrow key events
-        console.log('🔍 Sidebar received arrow key:', {
-          key: e.key,
-          activeElement: activeElement?.tagName,
-          classList: activeElement?.className || 'none',
-          id: activeElement?.id || 'none'
-        });
-        
         // VERY specific check for terminal input - be extremely conservative
         const isTerminalInput = activeElement && (
           activeElement.classList.contains('terminal-input') ||
@@ -158,90 +164,139 @@ export const Sidebar: React.FC = () => {
   return (
     <>
       <div className="w-full h-full bg-terminal-surface border-r border-terminal-border flex flex-col">
-        {/* Header */}
+        {/* Header with Tabs */}
         <div className="p-4 border-b border-terminal-border">
-          <div className="flex items-center justify-between">
-            <h1 className="font-semibold text-terminal-text">Sessions</h1>
+          <div className="flex items-center justify-between mb-3">
+            <h1 className="font-semibold text-terminal-text">pH7Console</h1>
+            {activeTab === 'terminals' && (
+              <button
+                onClick={handleCreateSession}
+                className="p-1 hover:bg-terminal-border rounded transition-colors focus-ring"
+                title="New Terminal"
+              >
+                <Plus className="w-4 h-4 text-terminal-muted" />
+              </button>
+            )}
+          </div>
+          
+          {/* Tab Navigation */}
+          <div className="flex bg-terminal-bg rounded-lg p-1">
             <button
-              onClick={handleCreateSession}
-              className="p-1 hover:bg-terminal-border rounded transition-colors focus-ring"
-              title="New Terminal"
+              onClick={() => setActiveTab('terminals')}
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                activeTab === 'terminals'
+                  ? 'bg-ai-primary text-white'
+                  : 'text-terminal-muted hover:text-terminal-text hover:bg-terminal-border'
+              }`}
             >
-              <Plus className="w-4 h-4 text-terminal-muted" />
+              <Terminal className="w-3 h-3" />
+              Terminals
+            </button>
+            <button
+              onClick={() => setActiveTab('explorer')}
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                activeTab === 'explorer'
+                  ? 'bg-ai-primary text-white'
+                  : 'text-terminal-muted hover:text-terminal-text hover:bg-terminal-border'
+              }`}
+            >
+              <Folder className="w-3 h-3" />
+              Explorer
             </button>
           </div>
         </div>
 
-        {/* Sessions List */}
-        <div className="flex-1 overflow-y-auto">
-          {sessions.length === 0 ? (
-            <div className="p-4 text-center text-terminal-muted">
-              <Terminal className="w-8 h-8 mx-auto mb-2 opacity-50" />
-              <p className="text-sm mb-3">No terminal sessions</p>
-              <button
-                onClick={handleCreateSession}
-                className="px-4 py-2 bg-ai-primary text-white rounded-lg hover:bg-ai-primary/90 transition-colors text-sm font-medium"
-              >
-                Create your first terminal
-              </button>
+        {/* Tab Content */}
+        <div className="flex-1 overflow-hidden">
+          {activeTab === 'terminals' ? (
+            /* Sessions List */
+            <div className="h-full overflow-y-auto">
+              {sessions.length === 0 ? (
+                <div className="p-4 text-center text-terminal-muted">
+                  <Terminal className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm mb-3">No terminal sessions</p>
+                  <button
+                    onClick={handleCreateSession}
+                    className="px-4 py-2 bg-ai-primary text-white rounded-lg hover:bg-ai-primary/90 transition-colors text-sm font-medium"
+                  >
+                    Create your first terminal
+                  </button>
+                </div>
+              ) : (
+                <div className="p-2 space-y-1">
+                  {sessions.map((session) => (
+                    <div
+                      key={session.id}
+                      onClick={() => setActiveSession(session.id)}
+                      onDoubleClick={() => handleDoubleClick(session)}
+                      className={`
+                        group flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors
+                        ${session.id === activeSession
+                          ? 'bg-ai-primary text-white'
+                          : 'text-terminal-text hover:bg-terminal-border'
+                        }
+                      `}
+                    >
+                      <div className="flex items-center space-x-3 min-w-0 flex-1">
+                        <Terminal className="w-4 h-4 flex-shrink-0" />
+                        <div className="min-w-0 flex-1">
+                          {editingSessionId === session.id ? (
+                            <input
+                              type="text"
+                              value={editingTitle}
+                              onChange={(e) => setEditingTitle(e.target.value)}
+                              onBlur={() => handleTitleSubmit(session.id)}
+                              onKeyDown={(e) => handleTitleKeyDown(e, session.id)}
+                              onFocus={handleInputFocus}
+                              onClick={handleInputClick}
+                              className="w-full bg-white/10 border border-white/20 rounded px-2 py-1 outline-none font-medium text-current focus:bg-white/20 focus:border-white/40"
+                              autoFocus
+                            />
+                          ) : (
+                            <div
+                              className="font-medium truncate"
+                              title={`${session.title} - Press Enter to rename, ↑/↓ arrows to navigate`}
+                            >
+                              {session.title}
+                            </div>
+                          )}
+                          <div className={`text-xs truncate ${session.id === activeSession ? 'text-white/70' : 'text-terminal-muted'
+                            }`}>
+                            {session.working_directory}
+                          </div>
+                        </div>
+                      </div>
+
+                      {sessions.length > 1 && (
+                        <button
+                          onClick={(e) => handleCloseSession(session.id, e)}
+                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-black/20 rounded transition-all"
+                          title="Close session"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
-            <div className="p-2 space-y-1">
-              {sessions.map((session) => (
-                <div
-                  key={session.id}
-                  onClick={() => setActiveSession(session.id)}
-                  onDoubleClick={() => handleDoubleClick(session)}
-                  className={`
-                    group flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors
-                    ${session.id === activeSession
-                      ? 'bg-ai-primary text-white'
-                      : 'text-terminal-text hover:bg-terminal-border'
-                    }
-                  `}
-                >
-                  <div className="flex items-center space-x-3 min-w-0 flex-1">
-                    <Terminal className="w-4 h-4 flex-shrink-0" />
-                    <div className="min-w-0 flex-1">
-                      {editingSessionId === session.id ? (
-                        <input
-                          type="text"
-                          value={editingTitle}
-                          onChange={(e) => setEditingTitle(e.target.value)}
-                          onBlur={() => handleTitleSubmit(session.id)}
-                          onKeyDown={(e) => handleTitleKeyDown(e, session.id)}
-                          onFocus={handleInputFocus}
-                          onClick={handleInputClick}
-                          className="w-full bg-white/10 border border-white/20 rounded px-2 py-1 outline-none font-medium text-current focus:bg-white/20 focus:border-white/40"
-                          autoFocus
-                        />
-                      ) : (
-                        <div
-                          className="font-medium truncate"
-                          title={`${session.title} - Press Enter to rename, ↑/↓ arrows to navigate`}
-                        >
-                          {session.title}
-                        </div>
-                      )}
-                      <div className={`text-xs truncate ${session.id === activeSession ? 'text-white/70' : 'text-terminal-muted'
-                        }`}>
-                        {session.working_directory}
-                      </div>
-                    </div>
-                  </div>
-
-                  {sessions.length > 1 && (
-                    <button
-                      onClick={(e) => handleCloseSession(session.id, e)}
-                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-black/20 rounded transition-all"
-                      title="Close session"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
+            /* File Explorer */
+            <FileExplorer
+              currentPath={currentExplorerPath}
+              activeSessionId={activeSession || undefined}
+              onPathChange={(newPath) => {
+                console.log(`📂 Sidebar: Changing explorer path to: ${newPath}`);
+                setCurrentExplorerPath(newPath);
+                // Note: FileExplorer already handles terminal directory change
+              }}
+              onFileSelect={(filePath) => {
+                console.log('File selected:', filePath);
+                // Here you could implement additional file opening functionality
+                // For example, opening files in an editor or showing file contents
+              }}
+            />
           )}
         </div>
 

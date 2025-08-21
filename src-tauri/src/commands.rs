@@ -523,11 +523,12 @@ pub async fn test_command() -> Result<String, String> {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RepoInfo {
     pub is_git_repo: bool,
-    pub branch: Option<String>,
+    pub current_branch: Option<String>,
     pub repo_name: Option<String>,
     pub remote_url: Option<String>,
     pub has_changes: bool,
-    pub ahead_behind: Option<(i32, i32)>, // (ahead, behind)
+    pub ahead: i32,
+    pub behind: i32,
 }
 
 /// Language/runtime information structure
@@ -538,34 +539,26 @@ pub struct RuntimeInfo {
     pub rust_version: Option<String>,
     pub python_version: Option<String>,
     pub git_version: Option<String>,
+    pub go_version: Option<String>,
+    pub java_version: Option<String>,
+    pub project_type: Option<String>, // Detected from project files (package.json, Cargo.toml, etc.)
 }
 
 /// Get repository information for the current directory
 #[tauri::command]
 pub async fn get_repo_info(
-    state: State<'_, AppState>,
-    session_id: String,
+    path: String,
 ) -> Result<RepoInfo, String> {
-    let terminal_manager = state.inner().terminal_manager.lock().await;
-    
-    // Get current working directory for the session
-    let sessions = &terminal_manager.sessions;
-    let working_dir = if let Some(session) = sessions.get(&session_id) {
-        session.working_directory.clone()
-    } else {
-        std::env::current_dir()
-            .map_err(|e| e.to_string())?
-            .to_string_lossy()
-            .to_string()
-    };
+    let working_dir = path;
 
     let mut repo_info = RepoInfo {
         is_git_repo: false,
-        branch: None,
+        current_branch: None,
         repo_name: None,
         remote_url: None,
         has_changes: false,
-        ahead_behind: None,
+        ahead: 0,
+        behind: 0,
     };
 
     // Check if we're in a git repository
@@ -582,7 +575,7 @@ pub async fn get_repo_info(
             if output.status.success() {
                 let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 if !branch.is_empty() {
-                    repo_info.branch = Some(branch);
+                    repo_info.current_branch = Some(branch.clone());
                 }
             }
         }
@@ -599,7 +592,7 @@ pub async fn get_repo_info(
                 
                 // Extract repo name from URL
                 if let Some(repo_name) = extract_repo_name(&remote_url) {
-                    repo_info.repo_name = Some(repo_name);
+                    repo_info.repo_name = Some(repo_name.clone());
                 }
             }
         }
@@ -623,9 +616,11 @@ pub async fn get_repo_info(
             .output()
         {
             if output.status.success() {
-                let count_output = String::from_utf8_lossy(&output.stdout).trim();
-                if let Some((ahead, behind)) = parse_ahead_behind(count_output) {
-                    repo_info.ahead_behind = Some((ahead, behind));
+                let count_output = String::from_utf8_lossy(&output.stdout);
+                let count_str = count_output.trim();
+                if let Some((ahead, behind)) = parse_ahead_behind(count_str) {
+                    repo_info.ahead = ahead;
+                    repo_info.behind = behind;
                 }
             }
         }
@@ -636,14 +631,22 @@ pub async fn get_repo_info(
 
 /// Get runtime/language version information
 #[tauri::command]
-pub async fn get_runtime_info() -> Result<RuntimeInfo, String> {
+pub async fn get_runtime_info(path: String) -> Result<RuntimeInfo, String> {
+    let working_dir = path;
+    
     let mut runtime_info = RuntimeInfo {
         node_version: None,
         npm_version: None,
         rust_version: None,
         python_version: None,
         git_version: None,
+        go_version: None,
+        java_version: None,
+        project_type: None,
     };
+
+    // Detect project type from files in the directory
+    runtime_info.project_type = detect_project_type(&working_dir);
 
     // Get Node.js version
     if let Ok(output) = std::process::Command::new("node").args(&["--version"]).output() {
@@ -682,6 +685,35 @@ pub async fn get_runtime_info() -> Result<RuntimeInfo, String> {
         }
     }
 
+    // Get Go version
+    if let Ok(output) = std::process::Command::new("go").args(&["version"]).output() {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            // Extract version number from "go version go1.21.0 darwin/amd64"
+            if let Some(version_part) = version.split_whitespace().nth(2) {
+                runtime_info.go_version = Some(version_part.to_string());
+            }
+        }
+    }
+
+    // Get Java version
+    if let Ok(output) = std::process::Command::new("java").args(&["--version"]).output() {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            // Extract version from first line
+            if let Some(line) = version.lines().next() {
+                runtime_info.java_version = Some(line.to_string());
+            }
+        }
+    } else if let Ok(output) = std::process::Command::new("java").args(&["-version"]).output() {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stderr).trim().to_string(); // Java outputs to stderr
+            if let Some(line) = version.lines().next() {
+                runtime_info.java_version = Some(line.to_string());
+            }
+        }
+    }
+
     // Get Git version
     if let Ok(output) = std::process::Command::new("git").args(&["--version"]).output() {
         if output.status.success() {
@@ -691,6 +723,43 @@ pub async fn get_runtime_info() -> Result<RuntimeInfo, String> {
     }
 
     Ok(runtime_info)
+}
+
+/// Detect project type based on files in the directory
+fn detect_project_type(working_dir: &str) -> Option<String> {
+    let path = std::path::Path::new(working_dir);
+    
+    // Check for common project files
+    if path.join("package.json").exists() {
+        // Check if it's a TypeScript project
+        if path.join("tsconfig.json").exists() || path.join("typescript").exists() {
+            return Some("typescript".to_string());
+        }
+        return Some("javascript".to_string());
+    }
+    
+    if path.join("Cargo.toml").exists() {
+        return Some("rust".to_string());
+    }
+    
+    if path.join("go.mod").exists() || path.join("go.sum").exists() {
+        return Some("go".to_string());
+    }
+    
+    if path.join("requirements.txt").exists() || 
+       path.join("pyproject.toml").exists() || 
+       path.join("setup.py").exists() ||
+       path.join("Pipfile").exists() {
+        return Some("python".to_string());
+    }
+    
+    if path.join("pom.xml").exists() || 
+       path.join("build.gradle").exists() || 
+       path.join("build.gradle.kts").exists() {
+        return Some("java".to_string());
+    }
+    
+    None
 }
 
 /// Helper function to find git root directory
@@ -760,5 +829,193 @@ pub async fn initialize_ml_system(
     match model_manager.load_model().await {
         Ok(_) => Ok("ML system initialized successfully".to_string()),
         Err(e) => Err(format!("Failed to initialize ML system: {}", e))
+    }
+}
+
+#[derive(Debug, serde::Serialize)]
+pub struct DirectoryInfo {
+    name: String,
+    path: String,
+    is_directory: bool,
+}
+
+/// Get parent directories for navigation
+#[tauri::command]
+pub async fn get_parent_directories(current_path: String) -> Result<Vec<DirectoryInfo>, String> {
+    use std::path::Path;
+    
+    let path = Path::new(&current_path);
+    let mut parents = Vec::new();
+    
+    // Add parent directories going up the hierarchy
+    let mut current = path;
+    while let Some(parent) = current.parent() {
+        if let Some(name) = parent.file_name() {
+            parents.push(DirectoryInfo {
+                name: name.to_string_lossy().to_string(),
+                path: parent.to_string_lossy().to_string(),
+                is_directory: true,
+            });
+        } else {
+            // Root directory
+            parents.push(DirectoryInfo {
+                name: "/".to_string(),
+                path: parent.to_string_lossy().to_string(),
+                is_directory: true,
+            });
+        }
+        current = parent;
+        
+        // Limit to reasonable number of parent levels
+        if parents.len() >= 10 {
+            break;
+        }
+    }
+    
+    Ok(parents)
+}
+
+/// Get child directories and files for navigation
+#[tauri::command]
+pub async fn get_child_directories(current_path: String) -> Result<Vec<DirectoryInfo>, String> {
+    use std::fs;
+    use std::path::Path;
+    
+    let path = Path::new(&current_path);
+    let mut children = Vec::new();
+    
+    match fs::read_dir(path) {
+        Ok(entries) => {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let entry_path = entry.path();
+                    if let Some(name) = entry_path.file_name() {
+                        let name_str = name.to_string_lossy().to_string();
+                        // Skip hidden files and directories (starting with .)
+                        if !name_str.starts_with('.') {
+                            children.push(DirectoryInfo {
+                                name: name_str,
+                                path: entry_path.to_string_lossy().to_string(),
+                                is_directory: entry_path.is_dir(),
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => return Err(format!("Failed to read directory: {}", e)),
+    }
+    
+    // Sort with directories first, then files, both alphabetically
+    children.sort_by(|a, b| {
+        match (a.is_directory, b.is_directory) {
+            (true, false) => std::cmp::Ordering::Less,    // Directories first
+            (false, true) => std::cmp::Ordering::Greater, // Files second
+            _ => a.name.cmp(&b.name),                      // Alphabetical within same type
+        }
+    });
+    
+    Ok(children)
+}
+
+/// Change current working directory
+#[tauri::command]
+pub async fn change_directory(
+    state: State<'_, AppState>,
+    session_id: String,
+    new_path: String,
+) -> Result<String, String> {
+    let mut terminal_manager = state.inner().terminal_manager.lock().await;
+    
+    // Execute cd command in the terminal
+    let command = format!("cd \"{}\"", new_path);
+    match terminal_manager.execute_command(&session_id, &command).await {
+        Ok(_) => Ok(new_path),
+        Err(e) => Err(format!("Failed to change directory: {}", e)),
+    }g
+}
+
+/// Execute or open a file
+#[tauri::command]
+pub async fn execute_file(
+    state: State<'_, AppState>,
+    session_id: String,
+    file_path: String,
+) -> Result<String, String> {
+    use std::path::Path;
+    
+    let path = Path::new(&file_path);
+    let mut terminal_manager = state.inner().terminal_manager.lock().await;
+    
+    if let Some(extension) = path.extension() {
+        let ext = extension.to_string_lossy().to_lowercase();
+        
+        let command = match ext.as_str() {
+            // Executable scripts
+            "sh" | "bash" => format!("bash \"{}\"", file_path),
+            "py" => format!("python \"{}\"", file_path),
+            "js" => format!("node \"{}\"", file_path),
+            "ts" => format!("npx ts-node \"{}\"", file_path),
+            "rs" => format!("cargo run --manifest-path \"{}\"", file_path),
+            
+            // Text files - open with default editor
+            "txt" | "md" | "json" | "yaml" | "yml" | "toml" | "xml" | "html" | "css" | "scss" => {
+                format!("open \"{}\"", file_path)
+            },
+            
+            // Source code files - open with default editor
+            "jsx" | "tsx" | "vue" | "svelte" | "php" | "rb" | "go" | "java" | "cpp" | "c" | "h" => {
+                format!("open \"{}\"", file_path)
+            },
+            
+            // Configuration files
+            "env" | "gitignore" | "dockerfile" | "makefile" => {
+                format!("open \"{}\"", file_path)
+            },
+            
+            // Images and media - open with default application
+            "png" | "jpg" | "jpeg" | "gif" | "svg" | "pdf" | "mp4" | "mov" | "mp3" => {
+                format!("open \"{}\"", file_path)
+            },
+            
+            // Default: try to open with system default application
+            _ => format!("open \"{}\"", file_path),
+        };
+        
+        match terminal_manager.execute_command(&session_id, &command).await {
+            Ok(_) => Ok(format!("Executed: {}", command)),
+            Err(e) => Err(format!("Failed to execute file: {}", e)),
+        }
+    } else {
+        // No extension - try to execute directly or open
+        let command = if path.is_file() {
+            // Check if file is executable
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                if let Ok(metadata) = std::fs::metadata(&file_path) {
+                    let permissions = metadata.permissions();
+                    if permissions.mode() & 0o111 != 0 {
+                        // File is executable
+                        format!("\"{}\"", file_path)
+                    } else {
+                        format!("open \"{}\"", file_path)
+                    }
+                } else {
+                    format!("open \"{}\"", file_path)
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                format!("\"{}\"", file_path)
+            }
+        } else {
+            format!("open \"{}\"", file_path)
+        };
+        
+        match terminal_manager.execute_command(&session_id, &command).await {
+            Ok(_) => Ok(format!("Executed: {}", command)),
+            Err(e) => Err(format!("Failed to execute file: {}", e)),
+        }
     }
 }

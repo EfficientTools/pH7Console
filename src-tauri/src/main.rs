@@ -76,6 +76,10 @@ fn main() {
             commands::initialize_ml_system,
             commands::get_repo_info,
             commands::get_runtime_info,
+            commands::get_parent_directories,
+            commands::get_child_directories,
+            commands::change_directory,
+            commands::execute_file,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

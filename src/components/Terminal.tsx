@@ -5,6 +5,7 @@ import { useHotkeys } from 'react-hotkeys-hook';
 import { Terminal as TerminalIcon, Zap, History } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { HistoryModal } from './HistoryModal';
+import TerminalHeader from './TerminalHeader';
 
 export const Terminal: React.FC = () => {
   const [input, setInput] = useState('');
@@ -18,6 +19,7 @@ export const Terminal: React.FC = () => {
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [historyCommands, setHistoryCommands] = useState<string[]>([]);
   const [originalInput, setOriginalInput] = useState('');
+  const [currentWorkingDir, setCurrentWorkingDir] = useState<string>('~');
 
   const inputRef = useRef<HTMLInputElement>(null);
   const terminalRef = useRef<HTMLDivElement>(null);
@@ -106,6 +108,66 @@ export const Terminal: React.FC = () => {
       terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
     }
   }, [commandHistory]);
+
+  // Update current working directory based on commands
+  useEffect(() => {
+    const updateWorkingDirectory = async () => {
+      try {
+        // Get the actual current working directory from the terminal session
+        if (activeSession && commandHistory.length > 0) {
+          // Look for the most recent command that might have changed directory
+          const recentCommands = commandHistory.slice(-5); // Check last 5 commands
+          let foundPwd = false;
+          
+          // Check if there's a recent pwd command
+          for (let i = recentCommands.length - 1; i >= 0; i--) {
+            const cmd = recentCommands[i];
+            if (cmd.command === 'pwd' && cmd.output) {
+              const newPath = cmd.output.trim();
+              setCurrentWorkingDir(newPath);
+              foundPwd = true;
+              break;
+            }
+          }
+          
+          // If no recent pwd, check if we have a cd command and run pwd
+          if (!foundPwd) {
+            const hasRecentCd = recentCommands.some(cmd => 
+              cmd.command.startsWith('cd ') || cmd.command === 'cd'
+            );
+            
+            if (hasRecentCd) {
+              // Execute pwd to get current directory
+              const result = await invoke<{ output: string }>('execute_command', {
+                sessionId: activeSession,
+                command: 'pwd',
+              });
+              if (result?.output) {
+                const newPath = result.output.trim();
+                setCurrentWorkingDir(newPath);
+              }
+            }
+          }
+        } else if (activeSession) {
+          // Initial directory check when session starts
+          const result = await invoke<{ output: string }>('execute_command', {
+            sessionId: activeSession,
+            command: 'pwd',
+          });
+          if (result?.output) {
+            const newPath = result.output.trim();
+            setCurrentWorkingDir(newPath);
+          }
+        }
+      } catch (error) {
+        console.log('Could not get current directory, using fallback');
+      }
+    };
+
+    if (activeSession) {
+      updateWorkingDirectory();
+    }
+  }, [activeSession, commandHistory]); // Update when commands change
 
   // Enhanced natural language detection and processing
   const detectNaturalLanguage = (input: string): boolean => {
@@ -557,6 +619,30 @@ export const Terminal: React.FC = () => {
 
   return (
     <div className="h-full flex flex-col bg-terminal-bg min-h-0 terminal">
+      {/* Warp-style Terminal Header */}
+      <TerminalHeader 
+        currentPath={currentWorkingDir} 
+        activeSessionId={activeSession || undefined}
+        onPathChange={async (newPath) => {
+          console.log(`🔄 Terminal: Changing working directory to: ${newPath}`);
+          // Update the working directory when the path changes from the header
+          setCurrentWorkingDir(newPath);
+          
+          // Also change the terminal's working directory if we have an active session
+          if (activeSession) {
+            try {
+              await invoke('change_directory', {
+                sessionId: activeSession,
+                newPath: newPath
+              });
+              console.log(`✅ Terminal: Successfully changed terminal directory to: ${newPath}`);
+            } catch (error) {
+              console.error(`❌ Terminal: Failed to change terminal directory:`, error);
+            }
+          }
+        }}
+      />
+      
       {/* Header with History Toggle */}
       <div className="flex items-center justify-between px-4 py-2 border-b border-terminal-border flex-shrink-0">
         <div className="flex items-center space-x-2">
