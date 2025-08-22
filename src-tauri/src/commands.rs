@@ -932,7 +932,7 @@ pub async fn change_directory(
     match terminal_manager.execute_command(&session_id, &command).await {
         Ok(_) => Ok(new_path),
         Err(e) => Err(format!("Failed to change directory: {}", e)),
-    }g
+    }
 }
 
 /// Execute or open a file
