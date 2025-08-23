@@ -15,17 +15,17 @@ tauri-build = { version = "2.0", features = [] }
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
-tauri = { version = "2.0", features = [ "protocol-asset", "shell-open"] }
+tauri = { version = "2.0", features = [ "protocol-asset"] }
 tauri-plugin-shell = "2.0"
 tauri-plugin-fs = "2.0"
 tauri-plugin-process = "2.0"
 
-# Local AI/ML Dependencies
-candle-core = "0.6"
-candle-nn = "0.6"
-candle-transformers = "0.6"
-tokenizers = "0.19"
-hf-hub = "0.3"
+# Local AI/ML Dependencies - disabled for now due to version conflicts
+# candle-core = "0.6"
+# candle-nn = "0.6"
+# candle-transformers = "0.6"
+# tokenizers = "0.19"
+# hf-hub = "0.3"
 
 # Terminal/PTY handling
 portable-pty = "0.8"
