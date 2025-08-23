@@ -3,6 +3,7 @@
 
 pub mod learning_engine;
 pub mod agent;
+pub mod enhanced_context;
 
 use std::path::PathBuf;
 use std::sync::Arc;

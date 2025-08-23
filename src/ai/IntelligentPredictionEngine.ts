@@ -314,6 +314,12 @@ export class IntelligentPredictionEngine {
     
     const predictions: IntentPrediction[] = [];
     
+    // Special handling for directory navigation commands
+    if (input.trim().startsWith('cd ') || input.trim() === 'cd') {
+      const directoryPredictions = await this.getValidatedDirectoryPredictions(input, sessionId);
+      predictions.push(...directoryPredictions);
+    }
+    
     // 1. Intent detection
     const detectedIntents = this.detectIntents(input);
     
@@ -335,6 +341,34 @@ export class IntelligentPredictionEngine {
 
     // Sort by confidence and relevance
     return predictions.sort((a, b) => b.confidence - a.confidence).slice(0, 8);
+  }
+
+  // Get validated directory navigation predictions
+  private async getValidatedDirectoryPredictions(input: string, _sessionId: string): Promise<IntentPrediction[]> {
+    if (!this.contextCache) return [];
+    
+    try {
+      const partialPath = input.replace(/^cd\s*/, '').trim();
+      
+      const suggestions = await invoke('get_validated_directory_suggestions', {
+        partial_path: partialPath,
+        current_dir: this.contextCache.workingDirectory,
+        frequent_dirs: this.contextCache.frequentDirectories || []
+      }) as string[];
+      
+      if (suggestions.length === 0) return [];
+      
+      return [{
+        intent: 'directory_navigation',
+        confidence: 0.95,
+        context: [this.contextCache.workingDirectory],
+        suggestions: suggestions,
+        explanation: 'Navigate to directories (validated paths only)'
+      }];
+    } catch (error) {
+      console.warn('Could not get validated directory suggestions:', error);
+      return [];
+    }
   }
 
   private detectIntents(input: string): string[] {

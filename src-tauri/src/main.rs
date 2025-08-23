@@ -47,9 +47,10 @@ fn main() {
             
             Ok(())
         })
-                .invoke_handler(tauri::generate_handler![
+        .invoke_handler(tauri::generate_handler![
             commands::create_terminal,
             commands::execute_command,
+            commands::execute_simple_command,
             commands::get_terminal_output,
             commands::ai_suggest_command,
             commands::ai_explain_command,

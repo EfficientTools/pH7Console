@@ -316,8 +316,218 @@ pub async fn get_smart_completions(
     let terminal_manager = state.inner().terminal_manager.lock().await;
     
     let context = terminal_manager.get_smart_context(&session_id);
+    let suggestions = model_manager.get_smart_completions(&partial_command, &context).await;
     
-    Ok(model_manager.get_smart_completions(&partial_command, &context).await)
+    // Validate all suggestions before returning them
+    let validated_suggestions = validate_command_suggestions(suggestions, &terminal_manager, &session_id).await;
+    
+    Ok(validated_suggestions)
+}
+
+/// Validate command suggestions by checking paths and commands actually exist
+async fn validate_command_suggestions(
+    suggestions: Vec<String>,
+    terminal_manager: &crate::terminal::TerminalManager,
+    session_id: &str
+) -> Vec<String> {
+    let mut validated = Vec::new();
+    
+    for suggestion in suggestions {
+        if let Some(validated_suggestion) = validate_single_suggestion(&suggestion, terminal_manager, session_id).await {
+            validated.push(validated_suggestion);
+        }
+    }
+    
+    validated
+}
+
+/// Validate a single suggestion and fix paths if necessary
+async fn validate_single_suggestion(
+    suggestion: &str,
+    terminal_manager: &crate::terminal::TerminalManager,
+    session_id: &str
+) -> Option<String> {
+    let parts: Vec<&str> = suggestion.split_whitespace().collect();
+    if parts.is_empty() {
+        return None;
+    }
+    
+    let command = parts[0];
+    
+    // First, validate the command exists
+    if !command_exists(command).await {
+        return None;
+    }
+    
+    // If it's a path-related command, validate and fix paths
+    if is_path_command(command) && parts.len() > 1 {
+        let mut fixed_parts = vec![command.to_string()];
+        
+        for part in &parts[1..] {
+            // Skip flags and options
+            if part.starts_with('-') {
+                fixed_parts.push(part.to_string());
+                continue;
+            }
+            
+            // Try to fix the path
+            if let Some(fixed_path) = fix_path_in_suggestion(part, terminal_manager, session_id).await {
+                fixed_parts.push(fixed_path);
+            } else {
+                // If path can't be fixed and is invalid, reject the whole suggestion
+                return None;
+            }
+        }
+        
+        Some(fixed_parts.join(" "))
+    } else {
+        // For non-path commands, just return if command exists
+        Some(suggestion.to_string())
+    }
+}
+
+/// Check if a command exists on the system
+async fn command_exists(command: &str) -> bool {
+    use std::process::Command;
+    
+    // Try `which` command first (Unix/macOS)
+    if let Ok(output) = Command::new("which")
+        .arg(command)
+        .output()
+    {
+        return output.status.success() && !output.stdout.is_empty();
+    }
+    
+    // Try `where` command (Windows)
+    if let Ok(output) = Command::new("where")
+        .arg(command)
+        .output()
+    {
+        return output.status.success() && !output.stdout.is_empty();
+    }
+    
+    // Try `command -v` as fallback
+    if let Ok(output) = Command::new("sh")
+        .arg("-c")
+        .arg(&format!("command -v {}", command))
+        .output()
+    {
+        return output.status.success() && !output.stdout.is_empty();
+    }
+    
+    false
+}
+
+/// Check if a command typically works with paths
+fn is_path_command(command: &str) -> bool {
+    matches!(command, 
+        "cd" | "ls" | "cat" | "cp" | "mv" | "rm" | "mkdir" | "rmdir" | 
+        "find" | "locate" | "open" | "vim" | "nano" | "emacs" | "code" |
+        "touch" | "chmod" | "chown" | "stat" | "file" | "du" | "df" |
+        "tar" | "zip" | "unzip" | "rsync" | "scp"
+    )
+}
+
+/// Fix a path in a suggestion to be valid from current working directory
+async fn fix_path_in_suggestion(
+    path: &str,
+    terminal_manager: &crate::terminal::TerminalManager,
+    session_id: &str
+) -> Option<String> {
+    use std::path::Path;
+    
+    let current_dir = if let Some(session) = terminal_manager.sessions.get(session_id) {
+        &session.working_directory
+    } else {
+        return None;
+    };
+    
+    // If it's already an absolute path, just check if it exists
+    if path.starts_with('/') || path.starts_with('~') {
+        let expanded_path = if path.starts_with('~') {
+            path.replace('~', &dirs::home_dir()?.to_string_lossy())
+        } else {
+            path.to_string()
+        };
+        
+        if Path::new(&expanded_path).exists() {
+            Some(expanded_path)
+        } else {
+            None
+        }
+    } else {
+        // For relative paths, try multiple strategies
+        
+        // 1. Check if it exists relative to current directory
+        let relative_path = Path::new(current_dir).join(path);
+        if relative_path.exists() {
+            return Some(path.to_string()); // Keep as relative if it works
+        }
+        
+        // 2. Try to find it in common directories
+        let search_dirs = vec![
+            dirs::home_dir()?,
+            dirs::desktop_dir().unwrap_or_else(|| dirs::home_dir().unwrap()),
+            dirs::document_dir().unwrap_or_else(|| dirs::home_dir().unwrap()),
+            dirs::download_dir().unwrap_or_else(|| dirs::home_dir().unwrap()),
+            Path::new("/usr/local").to_path_buf(),
+            Path::new("/opt").to_path_buf(),
+        ];
+        
+        for search_dir in search_dirs {
+            let candidate_path = search_dir.join(path);
+            if candidate_path.exists() {
+                return Some(candidate_path.to_string_lossy().to_string());
+            }
+        }
+        
+        // 3. Try to find it anywhere in the file system (limited search)
+        if let Some(found_path) = find_path_recursively(path, 3).await {
+            return Some(found_path);
+        }
+        
+        None
+    }
+}
+
+/// Find a path recursively with limited depth to avoid performance issues
+async fn find_path_recursively(target: &str, max_depth: usize) -> Option<String> {
+    use std::path::Path;
+    use std::fs;
+    
+    fn search_recursive(dir: &Path, target: &str, current_depth: usize, max_depth: usize) -> Option<String> {
+        if current_depth >= max_depth {
+            return None;
+        }
+        
+        if let Ok(entries) = fs::read_dir(dir) {
+            for entry in entries.take(50) { // Limit entries to avoid performance issues
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if let Some(filename) = path.file_name() {
+                        if filename.to_string_lossy() == target {
+                            return Some(path.to_string_lossy().to_string());
+                        }
+                    }
+                    
+                    // Recurse into directories
+                    if path.is_dir() && current_depth < max_depth {
+                        if let Some(found) = search_recursive(&path, target, current_depth + 1, max_depth) {
+                            return Some(found);
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+    
+    // Start search from home directory
+    if let Some(home) = dirs::home_dir() {
+        search_recursive(&home, target, 0, max_depth)
+    } else {
+        None
+    }
 }
 
 #[tauri::command]
@@ -398,6 +608,112 @@ pub async fn get_active_agent_tasks(
 ) -> Result<Vec<String>, String> {
     let model_manager = state.inner().model_manager.lock().await;
     Ok(model_manager.get_active_agent_tasks().await)
+}
+
+/// Validate and clean up frequent directories, removing non-existent ones
+#[tauri::command]
+pub async fn validate_frequent_directories(
+    frequent_dirs: Vec<String>
+) -> Result<Vec<String>, String> {
+    let mut validated_dirs = Vec::new();
+    
+    for dir in frequent_dirs {
+        if validate_directory_exists(&dir).await {
+            validated_dirs.push(dir);
+        }
+    }
+    
+    Ok(validated_dirs)
+}
+
+/// Check if a directory actually exists
+async fn validate_directory_exists(dir_path: &str) -> bool {
+    use std::path::Path;
+    
+    let expanded_path = if dir_path.starts_with('~') {
+        if let Some(home) = dirs::home_dir() {
+            dir_path.replace('~', &home.to_string_lossy())
+        } else {
+            dir_path.to_string()
+        }
+    } else {
+        dir_path.to_string()
+    };
+    
+    Path::new(&expanded_path).is_dir()
+}
+
+/// Get validated suggestions for directory navigation
+#[tauri::command]
+pub async fn get_validated_directory_suggestions(
+    partial_path: String,
+    current_dir: String,
+    frequent_dirs: Vec<String>
+) -> Result<Vec<String>, String> {
+    let mut suggestions = Vec::new();
+    
+    // First, validate and filter frequent directories
+    let valid_frequent_dirs = validate_frequent_directories(frequent_dirs).await?;
+    
+    // If partial_path is empty, suggest valid frequent directories
+    if partial_path.is_empty() {
+        for dir in valid_frequent_dirs {
+            suggestions.push(format!("cd {}", get_optimal_path(&dir, &current_dir)));
+        }
+        return Ok(suggestions);
+    }
+    
+    // Try to find matching directories
+    for dir in valid_frequent_dirs {
+        if dir.to_lowercase().contains(&partial_path.to_lowercase()) {
+            suggestions.push(format!("cd {}", get_optimal_path(&dir, &current_dir)));
+        }
+    }
+    
+    // Also check for directories relative to current directory
+    if let Ok(entries) = std::fs::read_dir(&current_dir) {
+        for entry in entries.take(20) { // Limit to avoid performance issues
+            if let Ok(entry) = entry {
+                let path = entry.path();
+                if path.is_dir() {
+                    if let Some(dir_name) = path.file_name() {
+                        let dir_name_str = dir_name.to_string_lossy();
+                        if dir_name_str.to_lowercase().contains(&partial_path.to_lowercase()) {
+                            suggestions.push(format!("cd {}", dir_name_str));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(suggestions)
+}
+
+/// Get the optimal path representation (relative if short, absolute if needed)
+fn get_optimal_path(target_dir: &str, current_dir: &str) -> String {
+    use std::path::Path;
+    
+    let target_path = Path::new(target_dir);
+    let current_path = Path::new(current_dir);
+    
+    // If target is under current directory, use relative path
+    if let Ok(relative) = target_path.strip_prefix(current_path) {
+        if relative.components().count() <= 3 { // Keep relative if not too deep
+            return format!("./{}", relative.to_string_lossy());
+        }
+    }
+    
+    // If current is under target directory, use ".."
+    if let Ok(relative) = current_path.strip_prefix(target_path) {
+        let up_levels = relative.components().count();
+        if up_levels <= 3 { // Don't suggest too many "../.."
+            return "../".repeat(up_levels).trim_end_matches('/').to_string();
+        }
+    }
+    
+    // For distant directories, use absolute path
+    target_dir.to_string()
 }
 
 /// Cancel agent task
@@ -1017,5 +1333,103 @@ pub async fn execute_file(
             Ok(_) => Ok(format!("Executed: {}", command)),
             Err(e) => Err(format!("Failed to execute file: {}", e)),
         }
+    }
+}
+
+// Enhanced Context Commands for Intelligent Predictions
+
+/// Get enhanced system context for intelligent predictions
+#[tauri::command]
+pub async fn get_enhanced_system_context(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<crate::ai::enhanced_context::SystemContext, String> {
+    let terminal_manager = state.inner().terminal_manager.lock().await;
+    let working_dir = terminal_manager.get_session(&session_id)
+        .map(|session| session.working_directory.clone())
+        .unwrap_or_else(|| std::env::current_dir().unwrap().to_string_lossy().to_string());
+    
+    let mut context_provider = crate::ai::enhanced_context::EnhancedContextProvider::new();
+    context_provider.get_system_context(&working_dir).await
+}
+
+/// Get learned workflow patterns
+#[tauri::command]
+pub async fn get_learned_workflow_patterns(
+    _state: State<'_, AppState>,
+) -> Result<Vec<crate::ai::enhanced_context::WorkflowPattern>, String> {
+    // This would integrate with the learning engine to get patterns
+    // For now, return empty vector as placeholder
+    Ok(vec![])
+}
+
+/// Get recent command sequence for workflow detection
+#[tauri::command]
+pub async fn get_recent_command_sequence(
+    state: State<'_, AppState>,
+    _session_id: String,
+    limit: usize,
+) -> Result<Vec<String>, String> {
+    let terminal_manager = state.inner().terminal_manager.lock().await;
+    let history = terminal_manager.get_command_history(Some(limit));
+    Ok(history.into_iter().map(|cmd| cmd.command.clone()).collect())
+}
+
+/// Get proactive system suggestions
+#[tauri::command]
+pub async fn get_proactive_suggestions(
+    state: State<'_, AppState>,
+    session_id: String,
+) -> Result<Vec<crate::ai::enhanced_context::ProactiveSuggestion>, String> {
+    let terminal_manager = state.inner().terminal_manager.lock().await;
+    let working_dir = terminal_manager.get_session(&session_id)
+        .map(|session| session.working_directory.clone())
+        .unwrap_or_else(|| std::env::current_dir().unwrap().to_string_lossy().to_string());
+    
+    let mut context_provider = crate::ai::enhanced_context::EnhancedContextProvider::new();
+    let context = context_provider.get_system_context(&working_dir).await
+        .map_err(|e| format!("Failed to get system context: {}", e))?;
+    
+    Ok(context_provider.get_proactive_suggestions(&context).await)
+}
+
+// Simple command execution for validation purposes
+#[tauri::command]
+pub async fn execute_simple_command(
+    command: String,
+    directory: Option<String>
+) -> Result<String, String> {
+    use std::process::Command;
+    
+    let working_dir = directory.unwrap_or_else(|| {
+        std::env::current_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "/".to_string())
+    });
+    
+    let output = if cfg!(target_os = "windows") {
+        Command::new("cmd")
+            .args(["/C", &command])
+            .current_dir(&working_dir)
+            .output()
+    } else {
+        Command::new("sh")
+            .args(["-c", &command])
+            .current_dir(&working_dir)
+            .output()
+    };
+    
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            
+            if !stderr.is_empty() {
+                Ok(format!("{}{}", stdout, stderr))
+            } else {
+                Ok(stdout.to_string())
+            }
+        }
+        Err(e) => Err(format!("Failed to execute command: {}", e))
     }
 }
