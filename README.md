@@ -1,4 +1,4 @@
-# pH7Console: An AI-Powered Terminal that Respects Your Privacy
+# pH7Console: AI-Powered Terminal that Respects Your Privacy
 
 ![pH7Console Logo](src-tauri/icons/icon.png "ML-first terminal alternative - AI-driven terminal")
 
