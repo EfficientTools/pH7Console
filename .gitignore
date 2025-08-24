@@ -155,6 +155,7 @@ config.local.json
 /training_data/
 /datasets/
 *.jsonl
+learning_data.json
 /user_patterns/
 /command_history.encrypted
 /src-tauri/ai_data/
