@@ -2,6 +2,7 @@
 
 # === Tauri/Rust ===
 /src-tauri/target/
+/target/
 /src-tauri/Cargo.lock
 *.pdb
 
@@ -123,6 +124,9 @@ pnpm-lock.yaml
 # === Testing ===
 coverage/
 .nyc_output/
+test-results/
+test-explorer/
+playwright-report/
 
 # === Tauri Specific ===
 /src-tauri/target/
@@ -156,6 +160,7 @@ config.local.json
 /datasets/
 *.jsonl
 learning_data.json
+*learning_data.json
 /user_patterns/
 /command_history.encrypted
 /src-tauri/ai_data/
