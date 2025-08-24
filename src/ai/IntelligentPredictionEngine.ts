@@ -143,102 +143,61 @@ export class IntelligentPredictionEngine {
     if (!this.contextCache) return '';
 
     try {
-      // First check if path exists as-is
-      const pathCheckResult = await invoke('execute_simple_command', {
-        command: `test -e "${path}" && echo "exists" || echo "not found"`,
-        directory: this.contextCache.workingDirectory
-      }) as string;
+      // Use the new Rust command for better path validation
+      const result = await invoke('validate_and_correct_path', {
+        path,
+        currentWorkingDir: this.contextCache.workingDirectory,
+        frequentDirectories: this.contextCache.frequentDirectories || []
+      }) as string | null;
 
-      if (pathCheckResult.includes('exists')) {
+      if (result) {
         this.pathCache.set(path, true);
-        return path;
-      }
-
-      // If path doesn't exist and it's relative, try to find it in frequent directories
-      if (!path.startsWith('/') && !path.startsWith('~')) {
-        // Validate frequent directories first to remove deleted ones
-        const validFrequentDirs = await this.validateFrequentDirectories();
-        
-        for (const frequentDir of validFrequentDirs) {
-          const fullPath = `${frequentDir}/${path}`;
-          const fullPathCheck = await invoke('execute_simple_command', {
-            command: `test -e "${fullPath}" && echo "exists" || echo "not found"`,
-            directory: this.contextCache.workingDirectory
-          }) as string;
-          
-          if (fullPathCheck.includes('exists')) {
-            this.pathCache.set(path, true);
-            return fullPath;
-          }
-        }
-        
-        // Try common directory patterns for the path
-        const commonPaths = await this.findPathInCommonLocations(path);
-        if (commonPaths) {
-          this.pathCache.set(path, true);
-          return commonPaths;
-        }
+        return result;
       }
 
       this.pathCache.set(path, false);
       return '';
-    } catch {
+    } catch (error) {
+      console.warn('Path validation failed:', error);
       this.pathCache.set(path, false);
       return '';
     }
   }
 
-  // Validate frequent directories and remove non-existent ones
+  // Validate and clean frequent directories
   private async validateFrequentDirectories(): Promise<string[]> {
-    if (!this.contextCache) return [];
-    
+    if (!this.contextCache?.frequentDirectories) return [];
+
     try {
-      const validatedDirs = await invoke('validate_frequent_directories', {
-        frequent_dirs: this.contextCache.frequentDirectories || []
+      const validDirs = await invoke('validate_frequent_directories', {
+        frequentDirs: this.contextCache.frequentDirectories,
+        currentWorkingDir: this.contextCache.workingDirectory
       }) as string[];
-      
-      // Update the context cache with cleaned directories
-      if (this.contextCache) {
-        this.contextCache.frequentDirectories = validatedDirs;
-      }
-      
-      return validatedDirs;
+
+      // Update context cache with validated directories
+      this.contextCache.frequentDirectories = validDirs;
+      return validDirs;
     } catch (error) {
-      console.warn('Could not validate frequent directories:', error);
+      console.warn('Failed to validate frequent directories:', error);
       return this.contextCache.frequentDirectories || [];
     }
   }
 
-  // Find a path in common locations like Desktop, Documents, Downloads, etc.
-  private async findPathInCommonLocations(targetPath: string): Promise<string | null> {
-    const commonLocations = [
-      '~/Desktop',
-      '~/Documents', 
-      '~/Downloads',
-      '~/Projects',
-      '~/Development',
-      '~/Code',
-      '/usr/local',
-      '/opt'
-    ];
-    
-    for (const location of commonLocations) {
-      try {
-        const fullPath = `${location}/${targetPath}`;
-        const pathCheck = await invoke('execute_simple_command', {
-          command: `test -e "${fullPath}" && echo "exists" || echo "not found"`,
-          directory: this.contextCache?.workingDirectory || '~'
-        }) as string;
-        
-        if (pathCheck.includes('exists')) {
-          return fullPath;
-        }
-      } catch {
-        continue;
-      }
+  // Find path in common locations
+  private async findPathInCommonLocations(targetName: string): Promise<string | null> {
+    if (!this.contextCache) return null;
+
+    try {
+      const result = await invoke('find_path_in_common_locations', {
+        targetName,
+        currentWorkingDir: this.contextCache.workingDirectory
+      }) as string | null;
+
+      return result;
+    } catch (error) {
+      console.warn('Failed to find path in common locations:', error);
+      return null;
     }
-    
-    return null;
   }
 
   // Get real, existing files in current directory
@@ -312,13 +271,12 @@ export class IntelligentPredictionEngine {
   ): Promise<IntentPrediction[]> {
     await this.updateSystemContext(sessionId);
     
-    const predictions: IntentPrediction[] = [];
-    
-    // Special handling for directory navigation commands
-    if (input.trim().startsWith('cd ') || input.trim() === 'cd') {
-      const directoryPredictions = await this.getValidatedDirectoryPredictions(input, sessionId);
-      predictions.push(...directoryPredictions);
+    // Validate and clean frequent directories before generating predictions
+    if (this.contextCache?.frequentDirectories) {
+      await this.validateFrequentDirectories();
     }
+    
+    const predictions: IntentPrediction[] = [];
     
     // 1. Intent detection
     const detectedIntents = this.detectIntents(input);
@@ -341,34 +299,6 @@ export class IntelligentPredictionEngine {
 
     // Sort by confidence and relevance
     return predictions.sort((a, b) => b.confidence - a.confidence).slice(0, 8);
-  }
-
-  // Get validated directory navigation predictions
-  private async getValidatedDirectoryPredictions(input: string, _sessionId: string): Promise<IntentPrediction[]> {
-    if (!this.contextCache) return [];
-    
-    try {
-      const partialPath = input.replace(/^cd\s*/, '').trim();
-      
-      const suggestions = await invoke('get_validated_directory_suggestions', {
-        partial_path: partialPath,
-        current_dir: this.contextCache.workingDirectory,
-        frequent_dirs: this.contextCache.frequentDirectories || []
-      }) as string[];
-      
-      if (suggestions.length === 0) return [];
-      
-      return [{
-        intent: 'directory_navigation',
-        confidence: 0.95,
-        context: [this.contextCache.workingDirectory],
-        suggestions: suggestions,
-        explanation: 'Navigate to directories (validated paths only)'
-      }];
-    } catch (error) {
-      console.warn('Could not get validated directory suggestions:', error);
-      return [];
-    }
   }
 
   private detectIntents(input: string): string[] {
@@ -527,6 +457,24 @@ export class IntelligentPredictionEngine {
       }
       suggestions.push('rm -i filename');  // Interactive deletion
       suggestions.push('find . -name "*.tmp" -delete');
+    } else if (input.includes('cd') || input.includes('navigate')) {
+      // Enhanced directory navigation with validated frequent directories
+      const validFrequentDirs = await this.validateFrequentDirectories();
+      for (const dir of (validFrequentDirs || []).slice(0, 3)) {
+        const dirName = dir.split('/').pop() || dir;
+        suggestions.push(`cd "${dir}"  # ${dirName}`);
+      }
+      
+      // Also suggest finding directories by name
+      const words = input.split(' ');
+      for (const word of words) {
+        if (word.length > 2 && !['cd', 'navigate', 'to', 'go'].includes(word.toLowerCase())) {
+          const foundPath = await this.findPathInCommonLocations(word);
+          if (foundPath) {
+            suggestions.push(`cd "${foundPath}"  # Found: ${word}`);
+          }
+        }
+      }
     } else {
       // General file management
       if (currentFiles.length > 0) {

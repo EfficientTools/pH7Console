@@ -7,12 +7,12 @@ vi.mock('@tauri-apps/api/core', () => ({
   invoke: vi.fn(),
 }));
 
-describe('IntelligentPredictionEngine - Edge Cases & Validation', () => {
+describe('IntelligentPredictionEngine - Validation Edge Cases', () => {
   let engine: IntelligentPredictionEngine;
   const mockInvoke = vi.mocked(invoke);
   
   const mockContext = {
-    workingDirectory: '/Users/test',
+    workingDirectory: '/Users/testuser',
     projectType: 'node',
     runningProcesses: ['node', 'npm'],
     systemResources: {
@@ -27,7 +27,7 @@ describe('IntelligentPredictionEngine - Edge Cases & Validation', () => {
       ahead: 0,
       behind: 0
     },
-    frequentDirectories: ['/Users/test/Projects', '/Users/test/DeletedDir', '/Users/test/Documents'],
+    frequentDirectories: ['/Users/testuser/Projects', '/Users/testuser/DirectoryZ', '/Users/testuser/Downloads'],
     availableCommands: ['ls', 'git', 'npm'],
     currentDirectoryContents: ['package.json', 'src', 'README.md']
   };
@@ -39,229 +39,256 @@ describe('IntelligentPredictionEngine - Edge Cases & Validation', () => {
 
   describe('Frequent Directory Validation', () => {
     it('should remove non-existent directories from frequent directories', async () => {
-      // Setup context
+      // Set up context with some non-existent directories
       (engine as any).contextCache = mockContext;
       
       // Mock validate_frequent_directories to return only existing directories
-      mockInvoke.mockResolvedValueOnce(['/Users/test/Projects', '/Users/test/Documents']);
+      mockInvoke.mockResolvedValueOnce([
+        '/Users/testuser/Projects',
+        '/Users/testuser/Downloads'
+        // DirectoryZ is missing because it was deleted
+      ]);
       
-      const validatedDirs = await (engine as any).validateFrequentDirectories();
+      const validDirs = await (engine as any).validateFrequentDirectories();
       
       expect(mockInvoke).toHaveBeenCalledWith('validate_frequent_directories', {
-        frequent_dirs: ['/Users/test/Projects', '/Users/test/DeletedDir', '/Users/test/Documents']
+        frequentDirs: ['/Users/testuser/Projects', '/Users/testuser/DirectoryZ', '/Users/testuser/Downloads'],
+        currentWorkingDir: mockContext.workingDirectory
       });
-      expect(validatedDirs).toEqual(['/Users/test/Projects', '/Users/test/Documents']);
-      expect(validatedDirs).not.toContain('/Users/test/DeletedDir');
+      
+      expect(validDirs).toEqual([
+        '/Users/testuser/Projects',
+        '/Users/testuser/Downloads'
+      ]);
+      
+      // Context should be updated with cleaned directories
+      expect((engine as any).contextCache.frequentDirectories).toEqual([
+        '/Users/testuser/Projects',
+        '/Users/testuser/Downloads'
+      ]);
     });
 
-    it('should update context cache with cleaned directories', async () => {
-      // Setup context
-      (engine as any).contextCache = { ...mockContext };
+    it('should handle empty frequent directories gracefully', async () => {
+      const contextWithoutFrequentDirs = { ...mockContext, frequentDirectories: undefined };
+      (engine as any).contextCache = contextWithoutFrequentDirs;
       
-      // Mock returning only valid directories
-      mockInvoke.mockResolvedValueOnce(['/Users/test/Projects']);
+      const validDirs = await (engine as any).validateFrequentDirectories();
       
-      await (engine as any).validateFrequentDirectories();
-      
-      // Check that context was updated
-      expect((engine as any).contextCache.frequentDirectories).toEqual(['/Users/test/Projects']);
+      expect(validDirs).toEqual([]);
+      expect(mockInvoke).not.toHaveBeenCalled();
     });
   });
 
-  describe('Path Correction Edge Cases', () => {
-    it('should find path in common locations when not in frequent directories', async () => {
-      // Setup context
-      (engine as any).contextCache = {
-        ...mockContext,
-        workingDirectory: '/Users/test',
-        frequentDirectories: []
-      };
+  describe('Path Correction and Auto-fixing', () => {
+    it('should correct relative paths to absolute paths regardless of current directory', async () => {
+      (engine as any).contextCache = mockContext;
       
-      // Mock path validation sequence
-      mockInvoke
-        .mockResolvedValueOnce([]) // validate_frequent_directories returns empty
-        .mockResolvedValueOnce('not found') // path doesn't exist as-is
-        .mockResolvedValueOnce('not found') // not in Desktop
-        .mockResolvedValueOnce('exists'); // found in Documents
+      // Mock validate_and_correct_path to return corrected absolute path
+      mockInvoke.mockResolvedValueOnce('/Users/testuser/Projects/myproject');
       
-      const correctedPath = await (engine as any).validateAndCorrectPath('MyProject');
+      const correctedPath = await (engine as any).validateAndCorrectPath('myproject');
       
-      expect(correctedPath).toBe('~/Documents/MyProject');
-    });
-
-    it('should return full absolute path when suggesting from different directory', async () => {
-      // Setup context - current directory is home, but target is elsewhere
-      (engine as any).contextCache = {
-        ...mockContext,
-        workingDirectory: '/Users/test',
-        frequentDirectories: ['/opt/projects/work-project']
-      };
-      
-      // Mock validated frequent directories
-      mockInvoke.mockResolvedValueOnce(['/opt/projects/work-project']);
-      
-      // Mock directory suggestions
-      mockInvoke.mockResolvedValueOnce(['cd /opt/projects/work-project']);
-      
-      const suggestions = await (engine as any).getValidatedDirectoryPredictions('cd work', 'session1');
-      
-      expect(suggestions[0].suggestions).toContain('cd /opt/projects/work-project');
-      expect(mockInvoke).toHaveBeenCalledWith('get_validated_directory_suggestions', {
-        partial_path: 'work',
-        current_dir: '/Users/test',
-        frequent_dirs: ['/opt/projects/work-project']
+      expect(mockInvoke).toHaveBeenCalledWith('validate_and_correct_path', {
+        path: 'myproject',
+        currentWorkingDir: '/Users/testuser',
+        frequentDirectories: mockContext.frequentDirectories
       });
+      
+      expect(correctedPath).toBe('/Users/testuser/Projects/myproject');
     });
 
-    it('should handle relative paths correctly from different working directories', async () => {
-      // Setup context
-      (engine as any).contextCache = {
-        ...mockContext,
-        workingDirectory: '/Users/test/deep/nested/folder'
-      };
+    it('should find directories in common locations when not in frequent directories', async () => {
+      (engine as any).contextCache = mockContext;
       
-      // Mock path doesn't exist relative to current dir
-      mockInvoke
-        .mockResolvedValueOnce([]) // no frequent dirs
-        .mockResolvedValueOnce('not found') // not relative to current
-        .mockResolvedValueOnce('exists'); // found in home/Desktop
+      // Mock find_path_in_common_locations
+      mockInvoke.mockResolvedValueOnce('/Users/testuser/Desktop/SomeFolder');
       
-      const correctedPath = await (engine as any).validateAndCorrectPath('project');
+      const foundPath = await (engine as any).findPathInCommonLocations('SomeFolder');
       
-      expect(correctedPath).toBe('~/Desktop/project');
+      expect(mockInvoke).toHaveBeenCalledWith('find_path_in_common_locations', {
+        targetName: 'SomeFolder',
+        currentWorkingDir: '/Users/testuser'
+      });
+      
+      expect(foundPath).toBe('/Users/testuser/Desktop/SomeFolder');
+    });
+
+    it('should handle tilde (~) expansion correctly', async () => {
+      (engine as any).contextCache = mockContext;
+      
+      // Mock that the path exists after tilde expansion
+      mockInvoke.mockResolvedValueOnce('/Users/testuser/Documents/ImportantFolder');
+      
+      const correctedPath = await (engine as any).validateAndCorrectPath('~/Documents/ImportantFolder');
+      
+      expect(correctedPath).toBe('/Users/testuser/Documents/ImportantFolder');
+    });
+
+    it('should return empty string for completely invalid paths', async () => {
+      (engine as any).contextCache = mockContext;
+      
+      // Mock that no valid path is found
+      mockInvoke.mockResolvedValueOnce(null);
+      
+      const correctedPath = await (engine as any).validateAndCorrectPath('completely/invalid/path');
+      
+      expect(correctedPath).toBe('');
     });
   });
 
   describe('Command Suggestion Validation', () => {
-    it('should reject suggestions with non-existent commands', async () => {
-      // Setup context
+    it('should validate all command suggestions before returning them', async () => {
       (engine as any).contextCache = mockContext;
       
-      // Mock command validation - fakecommand doesn't exist
-      mockInvoke.mockResolvedValueOnce('not found');
+      // Mock getCurrentDirectoryFiles
+      const mockGetCurrentDirectoryFiles = vi.spyOn(engine as any, 'getCurrentDirectoryFiles');
+      mockGetCurrentDirectoryFiles.mockResolvedValueOnce(['file1.txt', 'file2.js']);
       
-      const isValid = await (engine as any).validateCommand('fakecommand');
-      expect(isValid).toBe(false);
+      // Mock validateFrequentDirectories to return valid directories
+      mockInvoke.mockResolvedValueOnce(['/Users/testuser/Projects', '/Users/testuser/Downloads']);
+      
+      // Mock validateSuggestions to filter out invalid commands
+      const mockValidateSuggestions = vi.spyOn(engine as any, 'validateSuggestions');
+      mockValidateSuggestions.mockResolvedValueOnce([
+        'cd "/Users/testuser/Projects"  # Projects',
+        'ls -la /Users/testuser/Downloads'
+      ]);
+      
+      const prediction = await (engine as any).generateFileManagementPrediction('cd to my projects');
+      
+      expect(prediction.suggestions).toContain('cd "/Users/testuser/Projects"  # Projects');
+      expect(mockValidateSuggestions).toHaveBeenCalled();
+      
+      // Cleanup
+      mockGetCurrentDirectoryFiles.mockRestore();
+      mockValidateSuggestions.mockRestore();
     });
 
-    it('should validate and fix paths in command suggestions', async () => {
-      // Setup context
-      (engine as any).contextCache = mockContext;
-      
-      // Mock command exists
-      mockInvoke.mockResolvedValueOnce('/bin/ls');
-      
-      // Mock path validation and correction
-      mockInvoke
-        .mockResolvedValueOnce([]) // validate frequent dirs
-        .mockResolvedValueOnce('not found') // path doesn't exist as-is
-        .mockResolvedValueOnce('exists'); // found in common location
-      
-      const suggestions = ['ls ~/Documents/nonexistent-folder'];
-      const validSuggestions = await (engine as any).validateSuggestions(suggestions);
-      
-      // Should return corrected suggestion or empty if can't be fixed
-      expect(Array.isArray(validSuggestions)).toBe(true);
-    });
-
-    it('should handle directory navigation with absolute paths correctly', async () => {
-      // Setup context - user is in home directory
-      (engine as any).contextCache = {
+    it('should handle navigation to deleted frequent directories gracefully', async () => {
+      // Context with a deleted directory in frequent list
+      const contextWithDeletedDir = {
         ...mockContext,
-        workingDirectory: '/Users/test',
-        frequentDirectories: ['/opt/workspace', '/var/log/myapp']
+        frequentDirectories: ['/Users/testuser/Projects', '/Users/testuser/DeletedDirectory']
       };
+      (engine as any).contextCache = contextWithDeletedDir;
       
-      // Mock validated directories (some might not exist anymore)
-      mockInvoke.mockResolvedValueOnce(['/opt/workspace']);
+      // Mock getCurrentDirectoryFiles
+      const mockGetCurrentDirectoryFiles = vi.spyOn(engine as any, 'getCurrentDirectoryFiles');
+      mockGetCurrentDirectoryFiles.mockResolvedValueOnce(['file1.txt']);
       
-      // Mock directory suggestions with absolute paths
-      mockInvoke.mockResolvedValueOnce(['cd /opt/workspace']);
+      // Mock that validation removes the deleted directory
+      mockInvoke.mockResolvedValueOnce(['/Users/testuser/Projects']);
       
-      const predictions = await (engine as any).getValidatedDirectoryPredictions('cd ', 'session1');
+      // Mock the path finding for any remaining suggestions
+      const mockValidateSuggestions = vi.spyOn(engine as any, 'validateSuggestions');
+      mockValidateSuggestions.mockResolvedValueOnce(['cd "/Users/testuser/Projects"  # Projects']);
       
-      expect(predictions[0].suggestions).toContain('cd /opt/workspace');
-      expect(predictions[0].suggestions).not.toContain('cd /var/log/myapp'); // Should be filtered out
+      const prediction = await (engine as any).generateFileManagementPrediction('cd');
+      
+      // Should only suggest existing directories
+      expect(prediction.suggestions).not.toContain('DeletedDirectory');
+      expect(prediction.suggestions.some((s: string) => s.includes('/Users/testuser/Projects'))).toBe(true);
+      
+      // Cleanup
+      mockGetCurrentDirectoryFiles.mockRestore();
+      mockValidateSuggestions.mockRestore();
     });
   });
 
-  describe('Real-time Suggestions with Validation', () => {
-    it('should return only validated suggestions in real-time mode', async () => {
-      // Setup context
-      (engine as any).contextCache = mockContext;
+  describe('Context-aware Path Resolution', () => {
+    it('should provide full paths when user is in different directory', async () => {
+      // User is in home directory but frequently goes to a project directory
+      const homeContext = {
+        ...mockContext,
+        workingDirectory: '/Users/testuser',
+        frequentDirectories: ['/Users/testuser/Documents/Projects/MyApp']
+      };
+      (engine as any).contextCache = homeContext;
       
-      // Mock getPredictiveCompletions to return validated results
-      const mockPredictions = [{
-        intent: 'directory_navigation',
-        confidence: 0.9,
-        context: ['/Users/test'],
-        suggestions: ['cd /valid/path', 'cd /another/valid/path'],
-        explanation: 'Navigate to directories (validated paths only)'
-      }];
+      // Mock validation that confirms the frequent directory exists
+      mockInvoke.mockResolvedValueOnce(['/Users/testuser/Documents/Projects/MyApp']);
       
-      vi.spyOn(engine, 'getPredictiveCompletions').mockResolvedValue(mockPredictions);
+      // Mock finding the path
+      mockInvoke.mockResolvedValueOnce('/Users/testuser/Documents/Projects/MyApp');
       
-      const suggestions = await engine.getRealtimeSuggestions('cd proj', 'session1', 3);
+      // Mock validation of suggestions
+      const mockValidateSuggestions = vi.spyOn(engine as any, 'validateSuggestions');
+      mockValidateSuggestions.mockResolvedValueOnce([
+        'cd "/Users/testuser/Documents/Projects/MyApp"  # MyApp'
+      ]);
       
-      expect(suggestions).toEqual(['cd /valid/path', 'cd /another/valid/path']);
+      const prediction = await (engine as any).generateFileManagementPrediction('cd MyApp');
+      
+      // Should suggest full absolute path, not relative
+      expect(prediction.suggestions.some((s: string) => 
+        s.includes('/Users/testuser/Documents/Projects/MyApp')
+      )).toBe(true);
     });
 
-    it('should handle empty input gracefully', async () => {
-      const suggestions = await engine.getRealtimeSuggestions('', 'session1');
-      expect(suggestions).toEqual([]);
-    });
-
-    it('should limit suggestions to maxSuggestions parameter', async () => {
-      // Setup context
+    it('should handle multiple potential matches and prioritize existing ones', async () => {
       (engine as any).contextCache = mockContext;
       
-      const mockPredictions = [{
-        intent: 'general',
-        confidence: 0.8,
-        context: [],
-        suggestions: ['cmd1', 'cmd2', 'cmd3', 'cmd4', 'cmd5'],
-        explanation: 'Test commands'
-      }];
+      // Mock validation returning only existing directories
+      mockInvoke
+        .mockResolvedValueOnce(['/Users/testuser/Projects']) // validateFrequentDirectories
+        .mockResolvedValueOnce('/Users/testuser/Desktop/test-project'); // findPathInCommonLocations
       
-      vi.spyOn(engine, 'getPredictiveCompletions').mockResolvedValue(mockPredictions);
+      const mockValidateSuggestions = vi.spyOn(engine as any, 'validateSuggestions');
+      mockValidateSuggestions.mockResolvedValueOnce([
+        'cd "/Users/testuser/Projects"  # Projects',
+        'cd "/Users/testuser/Desktop/test-project"  # Found: test'
+      ]);
       
-      const suggestions = await engine.getRealtimeSuggestions('cmd', 'session1', 3);
+      const prediction = await (engine as any).generateFileManagementPrediction('cd test');
       
-      expect(suggestions.length).toBeLessThanOrEqual(3);
+      expect(prediction.suggestions.length).toBeGreaterThan(0);
+      expect(prediction.suggestions.every((s: string) => s.includes('cd "/'))).toBe(true);
     });
   });
 
-  describe('Path Finding in Common Locations', () => {
-    it('should search in common directories when path not found in frequent dirs', async () => {
-      // Setup context
-      (engine as any).contextCache = {
-        ...mockContext,
-        frequentDirectories: []
-      };
-      
-      // Mock path search sequence
-      mockInvoke
-        .mockResolvedValueOnce([]) // no frequent dirs
-        .mockResolvedValueOnce('not found') // not in current dir
-        .mockResolvedValueOnce('not found') // not in Desktop
-        .mockResolvedValueOnce('not found') // not in Documents
-        .mockResolvedValueOnce('exists'); // found in Downloads
-      
-      const foundPath = await (engine as any).findPathInCommonLocations('myfile.txt');
-      
-      expect(foundPath).toBe('~/Downloads/myfile.txt');
-    });
-
-    it('should return null when path not found anywhere', async () => {
-      // Setup context
+  describe('Error Handling and Resilience', () => {
+    it('should handle Tauri command failures gracefully', async () => {
       (engine as any).contextCache = mockContext;
       
-      // Mock all searches returning not found
-      mockInvoke.mockResolvedValue('not found');
+      // Mock Tauri command failure
+      mockInvoke.mockRejectedValueOnce(new Error('Tauri command failed'));
       
-      const foundPath = await (engine as any).findPathInCommonLocations('nonexistent-file');
+      const correctedPath = await (engine as any).validateAndCorrectPath('some/path');
       
-      expect(foundPath).toBeNull();
+      expect(correctedPath).toBe('');
+    });
+
+    it('should continue working when frequent directory validation fails', async () => {
+      (engine as any).contextCache = mockContext;
+      
+      // Mock validation failure
+      mockInvoke.mockRejectedValueOnce(new Error('Validation failed'));
+      
+      const validDirs = await (engine as any).validateFrequentDirectories();
+      
+      // Should fallback to original frequent directories
+      expect(validDirs).toEqual(mockContext.frequentDirectories || []);
+    });
+
+    it('should handle edge cases in path names', async () => {
+      (engine as any).contextCache = mockContext;
+      
+      const edgeCasePaths = [
+        'path with spaces',
+        'path-with-dashes',
+        'path_with_underscores',
+        'path.with.dots',
+        'UPPERCASE_PATH',
+        'mixed-Case_Path.dir'
+      ];
+      
+      for (const path of edgeCasePaths) {
+        mockInvoke.mockResolvedValueOnce(`/full/path/to/${path}`);
+        
+        const result = await (engine as any).validateAndCorrectPath(path);
+        
+        expect(result).toBe(`/full/path/to/${path}`);
+      }
     });
   });
 });

@@ -98,6 +98,7 @@ pub async fn execute_command(
         let context = terminal_manager.get_smart_context(&session_id);
         let success = execution.exit_code.unwrap_or(0) == 0;
         
+        // Enhanced learning with session context
         model_manager.learn_from_command(
             &command, // Use original command for learning
             &execution.output,
@@ -105,6 +106,9 @@ pub async fn execute_command(
             success,
             Some(execution.duration_ms),
         ).await;
+        
+        // Track session workflow for pattern recognition
+        model_manager.track_session_workflow(&session_id, &command).await;
     }
 
     result
@@ -318,7 +322,9 @@ pub async fn get_smart_completions(
     
     let context = terminal_manager.get_smart_context(&session_id);
     
-    Ok(model_manager.get_smart_completions(&partial_command, &context).await)
+    // Get enhanced completions with session context
+    let completions = model_manager.get_enhanced_completions(&partial_command, &context, &session_id).await;
+    Ok(completions)
 }
 
 #[tauri::command]

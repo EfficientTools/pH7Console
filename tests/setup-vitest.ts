@@ -2,8 +2,8 @@ import '@testing-library/jest-dom';
 import { vi } from 'vitest';
 
 // Mock Tauri API
-global.window = Object.create(window);
-global.__TAURI__ = {
+(globalThis as any).window = Object.create(window);
+(globalThis as any).__TAURI__ = {
   invoke: vi.fn(),
   event: {
     listen: vi.fn(),
@@ -20,6 +20,24 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(),
   emit: vi.fn(),
 }));
+
+// Mock clipboard API for tests
+Object.assign(navigator, {
+  clipboard: {
+    writeText: vi.fn().mockResolvedValue(undefined),
+    readText: vi.fn().mockResolvedValue(''),
+  },
+});
+
+// Mock ResizeObserver
+(globalThis as any).ResizeObserver = vi.fn().mockImplementation(() => ({
+  observe: vi.fn(),
+  unobserve: vi.fn(),
+  disconnect: vi.fn(),
+}));
+
+// Mock scrollIntoView
+Element.prototype.scrollIntoView = vi.fn();
 
 // Global test configuration
 export const TEST_CONFIG = {

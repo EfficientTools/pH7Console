@@ -676,6 +676,19 @@ impl ModelManager {
         learning_engine.get_smart_completions(partial_command, context)
     }
 
+    /// Enhanced completions with session context and workflow awareness
+    pub async fn get_enhanced_completions(&self, partial_command: &str, context: &str, session_id: &str) -> Vec<String> {
+        if !self.is_loaded {
+            return vec![];
+        }
+
+        let learning_engine = self.learning_engine.lock().await;
+        learning_engine.get_enhanced_suggestions(context, session_id, 8)
+            .into_iter()
+            .filter(|cmd| cmd.starts_with(partial_command) || cmd.contains(partial_command))
+            .collect()
+    }
+
     /// Learn from user interactions
     pub async fn learn_from_command(
         &self,
@@ -694,6 +707,14 @@ impl ModelManager {
                 success,
                 execution_time_ms,
             );
+        }
+    }
+
+    /// Track session workflow for enhanced pattern recognition
+    pub async fn track_session_workflow(&self, session_id: &str, command: &str) {
+        if self.is_loaded {
+            let mut learning_engine = self.learning_engine.lock().await;
+            learning_engine.track_session_workflow(session_id, command);
         }
     }
 

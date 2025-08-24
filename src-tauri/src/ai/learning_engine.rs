@@ -60,6 +60,10 @@ pub struct LearningEngine {
     user_preferences: UserPreferences,
     data_file: PathBuf,
     learning_rate: f32,
+    // Enhanced context tracking
+    session_workflows: HashMap<String, Vec<String>>, // Track command sequences per session
+    temporal_patterns: HashMap<String, Vec<DateTime<Utc>>>, // Track usage times
+    context_memory: HashMap<String, f32>, // Remember successful contexts
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -95,6 +99,10 @@ impl LearningEngine {
             user_preferences,
             data_file,
             learning_rate: 0.1,
+            // Initialize enhanced context tracking
+            session_workflows: HashMap::new(),
+            temporal_patterns: HashMap::new(),
+            context_memory: HashMap::new(),
         }
     }
 
@@ -149,6 +157,12 @@ impl LearningEngine {
 
         // Extract features and update neural patterns
         self.update_patterns(&example);
+
+        // Enhanced context learning
+        self.learn_context_association(&context, success);
+        
+        // Track temporal patterns
+        self.update_temporal_patterns(&input);
 
         // Store the example
         self.learning_data.push(example);
@@ -487,6 +501,142 @@ impl LearningEngine {
         if let Ok(json) = serde_json::to_string_pretty(&saved_data) {
             let _ = fs::write(&self.data_file, json);
         }
+    }
+
+    /// Enhanced learning: Track session workflows for pattern recognition
+    pub fn track_session_workflow(&mut self, session_id: &str, command: &str) {
+        let workflow = self.session_workflows.entry(session_id.to_string()).or_insert_with(Vec::new);
+        workflow.push(command.to_string());
+        
+        // Keep only last 50 commands per session to prevent memory bloat
+        if workflow.len() > 50 {
+            workflow.remove(0);
+        }
+        
+        // If we have enough commands, analyze workflow patterns
+        if workflow.len() >= 3 {
+            // Clone the workflow to avoid borrow checker issues
+            let workflow_clone = workflow.clone();
+            self.analyze_workflow_patterns(&workflow_clone);
+        }
+    }
+
+    /// Learn context associations based on success/failure
+    fn learn_context_association(&mut self, context: &str, success: bool) {
+        let context_key = self.extract_context_signature(context);
+        let weight_change = if success { 0.1 } else { -0.05 };
+        
+        let current_weight = self.context_memory.get(&context_key).unwrap_or(&0.5);
+        let new_weight = (current_weight + weight_change).clamp(0.0, 1.0);
+        
+        self.context_memory.insert(context_key, new_weight);
+    }
+
+    /// Track when commands are used for temporal pattern recognition
+    fn update_temporal_patterns(&mut self, command: &str) {
+        let pattern_key = self.generate_pattern_key(command);
+        let timestamps = self.temporal_patterns.entry(pattern_key).or_insert_with(Vec::new);
+        timestamps.push(Utc::now());
+        
+        // Keep only last 100 timestamps per command
+        if timestamps.len() > 100 {
+            timestamps.remove(0);
+        }
+    }
+
+    /// Analyze workflow patterns from session commands
+    fn analyze_workflow_patterns(&mut self, workflow: &[String]) {
+        if workflow.len() < 3 { return; }
+        
+        // Look for 3-command sequences
+        for window in workflow.windows(3) {
+            let pattern_key = format!("workflow:{}->{}->{}",
+                self.generate_pattern_key(&window[0]),
+                self.generate_pattern_key(&window[1]),
+                self.generate_pattern_key(&window[2])
+            );
+            
+            // Create or update workflow pattern
+            let workflow_pattern = self.patterns.entry(pattern_key).or_insert_with(|| {
+                NeuralPattern {
+                    input_features: vec![1.0, 1.0, 1.0], // Simple workflow indicator
+                    output_weights: vec![0.8, 0.8, 0.8], // High initial confidence for workflows
+                    bias: 0.1,
+                    confidence: 0.7,
+                    usage_count: 0,
+                    success_rate: 0.8, // Assume workflows are generally successful
+                }
+            });
+            
+            workflow_pattern.usage_count += 1;
+            workflow_pattern.confidence = (workflow_pattern.confidence + 0.1).min(1.0);
+        }
+    }
+
+    /// Extract a signature from context for memory association
+    fn extract_context_signature(&self, context: &str) -> String {
+        let mut signature_parts = Vec::new();
+        
+        // Extract key context elements
+        if context.contains("git") { signature_parts.push("git"); }
+        if context.contains("npm") || context.contains("node") { signature_parts.push("node"); }
+        if context.contains("python") || context.contains(".py") { signature_parts.push("python"); }
+        if context.contains("rust") || context.contains(".rs") { signature_parts.push("rust"); }
+        if context.contains("error") || context.contains("failed") { signature_parts.push("error"); }
+        if context.contains("/home") || context.contains("/Users") { signature_parts.push("home"); }
+        
+        signature_parts.join("_")
+    }
+
+    /// Get enhanced suggestions considering session context and temporal patterns
+    pub fn get_enhanced_suggestions(&self, context: &str, session_id: &str, limit: usize) -> Vec<String> {
+        let mut suggestions = Vec::new();
+        let context_features = self.extract_context_features(context);
+        let context_signature = self.extract_context_signature(context);
+        
+        // Boost suggestions based on context memory
+        let context_boost = self.context_memory.get(&context_signature).unwrap_or(&0.5);
+        
+        // Check for workflow patterns from current session
+        if let Some(session_workflow) = self.session_workflows.get(session_id) {
+            if session_workflow.len() >= 2 {
+                let recent_commands = &session_workflow[session_workflow.len().saturating_sub(2)..];
+                let workflow_suggestions = self.get_workflow_suggestions(recent_commands);
+                suggestions.extend(workflow_suggestions);
+            }
+        }
+        
+        // Get regular pattern-based suggestions with context boost
+        for (pattern_key, pattern) in &self.patterns {
+            let similarity = self.calculate_similarity(&context_features, &pattern.input_features);
+            let boosted_confidence = pattern.confidence * (1.0 + context_boost);
+            
+            if similarity > 0.3 {
+                suggestions.push((pattern_key.clone(), similarity * boosted_confidence));
+            }
+        }
+
+        // Sort by relevance and return top suggestions
+        suggestions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+        suggestions.into_iter()
+            .map(|(cmd, _)| cmd)
+            .take(limit)
+            .collect()
+    }
+
+    /// Get workflow-based suggestions
+    fn get_workflow_suggestions(&self, recent_commands: &[String]) -> Vec<(String, f32)> {
+        let mut suggestions = Vec::new();
+        
+        for (pattern_key, pattern) in &self.patterns {
+            if pattern_key.starts_with("workflow:") && pattern.usage_count > 2 {
+                // Simple workflow matching - could be more sophisticated
+                let workflow_confidence = pattern.confidence * 1.2; // Boost workflow suggestions
+                suggestions.push((pattern_key.clone(), workflow_confidence));
+            }
+        }
+        
+        suggestions
     }
 }
 
