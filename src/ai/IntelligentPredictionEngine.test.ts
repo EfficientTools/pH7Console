@@ -76,20 +76,24 @@ describe('IntelligentPredictionEngine', () => {
       // Set up context first
       (engine as any).contextCache = mockContext;
       
-      // Mock the invoke function to simulate existing path
-      mockInvoke.mockResolvedValueOnce('exists');
+      // Mock the new validate_and_correct_path command
+      mockInvoke.mockResolvedValueOnce('./src');
       
       const correctedPath = await (engine as any).validateAndCorrectPath('./src');
       expect(correctedPath).toBe('./src');
-      expect(mockInvoke).toHaveBeenCalledWith('execute_simple_command', {
-        command: 'test -e "./src" && echo "exists" || echo "not found"',
-        directory: mockContext.workingDirectory
+      expect(mockInvoke).toHaveBeenCalledWith('validate_and_correct_path', {
+        path: './src',
+        currentWorkingDir: mockContext.workingDirectory,
+        frequentDirectories: mockContext.frequentDirectories
       });
     });
 
     it('should return empty string for non-existent paths', async () => {
-      // Mock failed path validation
-      mockInvoke.mockResolvedValueOnce('not found');
+      // Set up context first
+      (engine as any).contextCache = mockContext;
+      
+      // Mock failed path validation (returns null)
+      mockInvoke.mockResolvedValueOnce(null);
       
       const correctedPath = await (engine as any).validateAndCorrectPath('./nonexistent');
       expect(correctedPath).toBe('');
@@ -103,10 +107,8 @@ describe('IntelligentPredictionEngine', () => {
         frequentDirectories: ['/home/user', '/projects']
       };
 
-      // Mock path not found in current directory
-      mockInvoke.mockResolvedValueOnce('not found');
-      // Mock path found in frequent directory
-      mockInvoke.mockResolvedValueOnce('exists');
+      // Mock that the new command returns the corrected path
+      mockInvoke.mockResolvedValueOnce('/home/user/documents');
       
       const correctedPath = await (engine as any).validateAndCorrectPath('documents');
       expect(correctedPath).toBe('/home/user/documents');
@@ -152,16 +154,15 @@ describe('IntelligentPredictionEngine', () => {
     it('should correct paths in suggestions', async () => {
       // Setup context
       (engine as any).contextCache = {
+        ...mockContext,
         workingDirectory: '/current',
         frequentDirectories: ['/home/user']
       };
 
       // Mock command validation (ls exists)
       mockInvoke.mockResolvedValueOnce('/bin/ls');
-      // Mock path validation (file not in current dir)
-      mockInvoke.mockResolvedValueOnce('not found');
-      // Mock path found in frequent directory
-      mockInvoke.mockResolvedValueOnce('exists');
+      // Mock path validation and correction
+      mockInvoke.mockResolvedValueOnce('/home/user/documents/file.txt');
       
       const suggestions = ['ls documents/file.txt'];
       const validSuggestions = await (engine as any).validateSuggestions(suggestions);

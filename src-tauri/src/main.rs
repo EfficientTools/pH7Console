@@ -81,6 +81,9 @@ fn main() {
             commands::get_child_directories,
             commands::change_directory,
             commands::execute_file,
+            commands::validate_frequent_directories,
+            commands::find_path_in_common_locations,
+            commands::validate_and_correct_path,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
