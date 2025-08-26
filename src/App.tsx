@@ -11,14 +11,14 @@ function App() {
   const [aiModelLoaded, setAiModelLoaded] = useState(false);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   const [aiPanelVisible, setAiPanelVisible] = useState(true);
-  const { createSession } = useTerminalStore();
+  const { initializeDefaultSessions } = useTerminalStore();
   const { loadModel } = useAIStore();
 
   useEffect(() => {
     const initializeApp = async () => {
       try {
-        // Create initial terminal session
-        await createSession('Main Terminal');
+        // Initialize default terminal sessions (will create 2 tabs by default or restore persisted sessions)
+        await initializeDefaultSessions();
         
         // Load AI model
         await loadModel();
@@ -40,7 +40,7 @@ function App() {
     };
 
     initializeApp();
-  }, [createSession, loadModel]);
+  }, [initializeDefaultSessions, loadModel]);
 
   // Keyboard shortcuts for toggling panels
   useEffect(() => {
