@@ -1,4 +1,8 @@
-# pH7Console: First AI-Powered Terminal, Privacy-First with Advanced Built-In Local Machine Learning
+# pH7Console: AI-Powered Terminal that Respects Your Privacy
+
+![pH7Console Logo](src-tauri/icons/icon.png "ML-first terminal alternative - AI-driven terminal")
+
+## Privacy-First AI-Powered Terminal with Advanced Built-In Local Machine Learning
 
 pH7Console is a privacy-focused, ML-first terminal that brings the power of local AI and sophisticated machine learning to your command line experience. Built with Tauri for maximum performance and security.
 
