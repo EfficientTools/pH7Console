@@ -745,7 +745,68 @@ npm run tauri:build
 - Frequently used command sequences become smart templates
 - Context-aware suggestions based on your project type
 
-### Building for Different Platforms
+### Mac App Store Distribution
+
+**Prerequisites for App Store submission:**
+1. **Apple Developer Program** membership ($99/year)
+2. **App Store Connect** account setup
+3. **Provisioning Profile** for Mac App Store distribution
+4. **Code Signing Certificate** (3rd Party Mac Developer Application)
+
+**Setup Steps:**
+
+1. **Create App ID in Developer Portal:**
+   - Go to [Apple Developer Portal](https://developer.apple.com/account/)
+   - Create App ID with Bundle ID: `com.efficienttools.ph7console`
+
+2. **Create Provisioning Profile:**
+   - Create "Mac App Store Connect" provisioning profile
+   - Download and save as: `src-tauri/profile/pH7Console_Mac_App_Store.provisionprofile`
+
+3. **Update Entitlements:**
+   - Edit `src-tauri/Entitlements.plist`
+   - Replace `YOUR_TEAM_ID` with your Apple Developer Team ID
+
+
+5. **Download API Key:**
+   - Create App Store Connect API Key in [Users and Access](https://appstoreconnect.apple.com/access/users)
+   - Download `AuthKey_XXXXXXXXXX.p8` file
+   - Save to `~/.appstoreconnect/private_keys/` or `~/private_keys/`
+
+**Build and Upload:**
+
+```bash
+# Build for App Store
+npm run tauri:build:appstore
+
+# Upload to App Store Connect
+npm run tauri:upload:appstore
+
+# Or do both in one command
+npm run appstore
+```
+
+**Manual Build Process:**
+```bash
+# 1. Build app bundle
+npm run tauri build -- --no-bundle
+npm run tauri bundle -- --bundles app --target universal-apple-darwin --config src-tauri/tauri.appstore.conf.json
+
+# 2. Create signed PKG
+xcrun productbuild --sign "3rd Party Mac Developer Application" \
+  --component "target/universal-apple-darwin/release/bundle/macos/pH7Console.app" /Applications \
+  pH7Console.pkg
+
+# 3. Upload to App Store
+xcrun altool --upload-app --type macos --file "pH7Console.pkg" \
+  --apiKey $APPLE_API_KEY_ID --apiIssuer $APPLE_API_ISSUER
+```
+
+**Post-Upload:**
+1. Monitor processing in [App Store Connect](https://appstoreconnect.apple.com)
+2. Build appears in TestFlight after processing (10-60 minutes)
+3. Submit for App Store review when ready
+4. Track review status and respond to feedback
 
 #### Cross-Platform Compilation
 
