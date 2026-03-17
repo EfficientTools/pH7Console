@@ -4,14 +4,29 @@
 
 A privacy-first terminal built with Tauri that runs AI models locally — no telemetry, no cloud, no data leaving your machine.
 
+## Usage
+
+Type commands naturally — the AI translates them:
+
+```
+"show me all large files"  →  find . -type f -size +100M -exec ls -lh {} \;
+"what's using the most CPU?"  →  top -o cpu
+"check git status and stage changes"  →  git status && git add .
+```
+
+AI slash commands:
+- `/explain <command>` — explain what any command does
+- `/fix` — analyse the last error and suggest a fix
+- `/optimize` — suggest a more efficient alternative
+
 ## Features
 
 - **Natural Language Commands** — Type plain English; get shell commands
-- **Smart Completions** — Context-aware suggestions as you type (Tab)
+- **Smart Completions** — Context-aware Tab suggestions
 - **Error Assistance** — AI automatically suggests fixes when commands fail
-- **Local LLM Support** — Runs Phi-3 Mini, Llama 3.2, TinyLlama, or CodeQwen locally
+- **Local LLM Processing** — All inference runs on your machine; nothing leaves it
 - **Pattern Learning** — Learns your workflows and adapts suggestions over time
-- **Multi-Session** — Multiple terminal sessions with `Cmd+T`
+- **Multi-Session** — `Cmd+T` new session, `Cmd+W` close, `Cmd+1–9` switch
 
 ## Requirements
 
@@ -52,6 +67,15 @@ cd src-tauri && cargo fmt      # Format Rust code
 cd src-tauri && cargo clippy   # Lint Rust code
 npm run test:e2e               # Integration tests
 ```
+
+## Local AI Models
+
+| Model | Size | RAM | Speed | Best for |
+|-------|------|-----|-------|----------|
+| Phi-3 Mini | 3.8 GB | 4–6 GB | 200–500 ms | Complex reasoning, code generation |
+| Llama 3.2 1B | 1.2 GB | 2–3 GB | 100–200 ms | General commands, explanations |
+| TinyLlama | 1.1 GB | 1.5–2 GB | 50–100 ms | Real-time completions |
+| CodeQwen | 1.5 GB | 2–4 GB | 150–300 ms | Programming tasks, code analysis |
 
 ## Tech Stack
 
