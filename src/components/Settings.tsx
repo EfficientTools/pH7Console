@@ -1,6 +1,7 @@
-import React, { useState, useRef } from 'react';
+import React, { useRef } from 'react';
 import { X, Settings as SettingsIcon, Monitor, Palette, Keyboard, Brain } from 'lucide-react';
 import { useClickOutside } from '../hooks/useClickOutside';
+import { useSettingsStore } from '../store/settingsStore';
 
 interface SettingsProps {
   isOpen: boolean;
@@ -8,39 +9,14 @@ interface SettingsProps {
 }
 
 export const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
-  const [activeTab, setActiveTab] = useState('appearance');
+  const [activeTab, setActiveTab] = React.useState('appearance');
   const modalRef = useRef<HTMLDivElement>(null);
 
   // Close modal when clicking outside
   useClickOutside(modalRef, onClose, isOpen);
-  const [settings, setSettings] = useState({
-    appearance: {
-      theme: 'dark',
-      fontSize: 14,
-      fontFamily: 'SF Mono',
-      opacity: 0.95,
-    },
-    terminal: {
-      shell: 'zsh',
-      historyLimit: 1000,
-      clearOnExit: false,
-      saveHistory: true,
-    },
-    ai: {
-      modelSize: 'lightweight',
-      autoSuggestions: true,
-      explainOnHover: true,
-      smartCompletions: true,
-    },
-    keyboard: {
-      shortcuts: {
-        newTerminal: 'Cmd+T',
-        closeTerminal: 'Cmd+W',
-        toggleAI: 'Cmd+K',
-        clearTerminal: 'Cmd+L',
-      }
-    }
-  });
+
+  const { appearance, terminal, ai, keyboard, updateAppearance, updateTerminal, updateAI } = useSettingsStore();
+  const settings = { appearance, terminal, ai, keyboard };
 
   if (!isOpen) return null;
 
@@ -52,13 +28,9 @@ export const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
   ];
 
   const updateSetting = (category: string, key: string, value: any) => {
-    setSettings(prev => ({
-      ...prev,
-      [category]: {
-        ...prev[category as keyof typeof prev],
-        [key]: value,
-      }
-    }));
+    if (category === 'appearance') updateAppearance(key as any, value);
+    else if (category === 'terminal') updateTerminal(key as any, value);
+    else if (category === 'ai') updateAI(key as any, value);
   };
 
   return (
@@ -149,14 +121,21 @@ export const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                     <select
                       value={settings.appearance.fontFamily}
                       onChange={(e) => updateSetting('appearance', 'fontFamily', e.target.value)}
-                      className="w-full p-2 bg-terminal-bg border border-terminal-border rounded focus:ring-2 focus:ring-ai-primary focus:border-transparent"
+                      className="w-full p-2 bg-terminal-bg border border-terminal-border rounded focus:ring-2 focus:ring-ai-primary focus:border-transparent font-mono"
                     >
+                      <option value="ui-monospace">System Default (SF Mono / Cascadia Code)</option>
                       <option value="SF Mono">SF Mono</option>
                       <option value="Monaco">Monaco</option>
+                      <option value="Menlo">Menlo</option>
                       <option value="Inconsolata">Inconsolata</option>
+                      <option value="JetBrains Mono">JetBrains Mono</option>
+                      <option value="Fira Code">Fira Code</option>
                       <option value="Roboto Mono">Roboto Mono</option>
                       <option value="Courier New">Courier New</option>
                     </select>
+                    <p className="text-xs text-terminal-muted mt-1">
+                      Font must be installed on your system to take effect.
+                    </p>
                   </div>
 
                   <div>

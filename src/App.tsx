@@ -4,6 +4,7 @@ import { AIPanel } from './components/AIPanel';
 import { Sidebar } from './components/Sidebar';
 import { useTerminalStore } from './store/terminalStore';
 import { useAIStore } from './store/aiStore';
+import { useSettingsStore } from './store/settingsStore';
 import { PanelLeftOpen, PanelLeftClose, PanelRightOpen, PanelRightClose } from 'lucide-react';
 
 function App() {
@@ -13,6 +14,14 @@ function App() {
   const [aiPanelVisible, setAiPanelVisible] = useState(true);
   const { initializeDefaultSessions } = useTerminalStore();
   const { loadModel } = useAIStore();
+  const { appearance } = useSettingsStore();
+
+  // Apply terminal font and size as CSS custom properties so the whole UI respects user preference
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--terminal-font', `${appearance.fontFamily}, ui-monospace, monospace`);
+    root.style.setProperty('--terminal-font-size', `${appearance.fontSize}px`);
+  }, [appearance.fontFamily, appearance.fontSize]);
 
   useEffect(() => {
     const initializeApp = async () => {

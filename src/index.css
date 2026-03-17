@@ -4,7 +4,9 @@
 
 @layer base {
   body {
-    @apply bg-terminal-bg text-terminal-text font-mono;
+    @apply bg-terminal-bg text-terminal-text;
+    font-family: var(--terminal-font, ui-monospace, 'SF Mono', Monaco, Menlo, Consolas, monospace);
+    font-size: var(--terminal-font-size, 14px);
   }
 }
 
@@ -14,7 +16,9 @@
   }
   
   .terminal-input {
-    @apply bg-transparent border-none outline-none text-terminal-text font-mono;
+    @apply bg-transparent border-none outline-none text-terminal-text;
+    font-family: var(--terminal-font, ui-monospace, 'SF Mono', Monaco, Menlo, Consolas, monospace);
+    font-size: var(--terminal-font-size, 14px);
   }
   
   .ai-suggestion {
@@ -22,7 +26,8 @@
   }
   
   .command-output {
-    @apply text-terminal-muted font-mono text-sm leading-relaxed;
+    @apply text-terminal-muted text-sm leading-relaxed;
+    font-family: var(--terminal-font, ui-monospace, 'SF Mono', Monaco, Menlo, Consolas, monospace);
   }
   
   .ai-badge {
