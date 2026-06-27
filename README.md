@@ -2,7 +2,7 @@
 
 ![pH7Console Logo](src-tauri/icons/icon.png "ML-first terminal alternative - AI-driven terminal")
 
-A privacy-first terminal built with Tauri that runs AI models locally — no telemetry, no cloud, no data leaving your machine.
+A privacy-first terminal built with Tauri that runs AI models locally. No telemetry, no cloud, no data leaving your machine.
 
 ## Usage
 
