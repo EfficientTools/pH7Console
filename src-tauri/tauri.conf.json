@@ -1,8 +1,15 @@
 {
-  "$schema": "../node_modules/@tauri-apps/cli/schema.json",
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "pH7Console",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "identifier": "com.efficienttools.ph7console",
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["ph7console"]
+      }
+    }
+  },
   "build": {
     "beforeBuildCommand": "npm run build",
     "beforeDevCommand": "npm run dev -- --port 5174",
@@ -12,7 +19,7 @@
   "app": {
     "windows": [
       {
-        "title": "pH7Console - ML-First Terminal",
+        "title": "pH7Console - Private Command Console",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
@@ -28,14 +35,16 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ipc: http://ipc.localhost"
     }
   },
   "bundle": {
     "active": true,
     "category": "DeveloperTool",
-    "copyright": "Copyright © 2025 EfficientTools",
-    "externalBin": [],
+    "copyright": "Copyright © 2026 EfficientTools",
+    "externalBin": [
+      "binaries/llama-server"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -43,16 +52,26 @@
       "icons/icon.icns",
       "icons/icon.png"
     ],
-    "longDescription": "An intelligent, ML-first terminal with local AI capabilities",
+    "longDescription": "A private command console with a real PTY, cancellable on-device assistance, adaptive workflows, and encrypted local history",
     "macOS": {
-      "entitlements": null,
-      "exceptionDomain": "",
       "frameworks": [],
+      "minimumSystemVersion": "13.3",
       "providerShortName": null,
       "signingIdentity": null
     },
-    "resources": [],
-    "shortDescription": "ML-First Terminal",
+    "resources": [
+      "PrivacyInfo.xcprivacy",
+      "resources/models/terminal-assistant.gguf",
+      "resources/models/NOTICE.md",
+      "resources/models/LICENSE-QWEN",
+      "resources/models/LICENSE-LLAMA-CPP",
+      "resources/models/LICENSE-CPP-HTTPLIB",
+      "resources/models/LICENSE-NLOHMANN-JSON",
+      "resources/licenses/NOTICE.md",
+      "resources/licenses/LICENSE-SQLCIPHER",
+      "../scripts/ph7"
+    ],
+    "shortDescription": "Private Command Console",
     "targets": "all",
     "windows": {
       "certificateThumbprint": null,
@@ -63,11 +82,6 @@
       "deb": {
         "depends": []
       }
-    }
-  },
-  "plugins": {
-    "shell": {
-      "open": true
     }
   }
 }

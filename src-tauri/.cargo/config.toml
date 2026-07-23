@@ -1,0 +1,4 @@
+[resolver]
+# Future lockfile updates must prefer packages compatible with the package
+# rust-version, preventing a silent MSRV mismatch from broad 2.x dependencies.
+incompatible-rust-versions = "fallback"

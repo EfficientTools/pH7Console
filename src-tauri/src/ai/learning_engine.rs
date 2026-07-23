@@ -1,8 +1,8 @@
+use chrono::{DateTime, Timelike, Utc};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc, Timelike};
 
 /// Learning data structure for AI training
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +31,8 @@ pub enum CommandType {
 /// Neural network-like structure for pattern learning
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NeuralPattern {
+    #[serde(skip)]
+    pub command: String,
     pub input_features: Vec<f32>,
     pub output_weights: Vec<f32>,
     pub bias: f32,
@@ -63,7 +65,7 @@ pub struct LearningEngine {
     // Enhanced context tracking
     session_workflows: HashMap<String, Vec<String>>, // Track command sequences per session
     temporal_patterns: HashMap<String, Vec<DateTime<Utc>>>, // Track usage times
-    context_memory: HashMap<String, f32>, // Remember successful contexts
+    context_memory: HashMap<String, f32>,            // Remember successful contexts
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,48 +90,35 @@ impl Default for UserPreferences {
 impl LearningEngine {
     pub fn new(data_dir: PathBuf) -> Self {
         let data_file = data_dir.join("learning_data.json");
-        
-        let (learning_data, patterns, command_stats, user_preferences) = 
-            Self::load_or_create_data(&data_file);
 
-        Self {
-            learning_data,
+        let patterns = Self::load_or_create_data(&data_file);
+
+        let engine = Self {
+            learning_data: Vec::new(),
             patterns,
-            command_stats,
-            user_preferences,
+            command_stats: HashMap::new(),
+            user_preferences: UserPreferences::default(),
             data_file,
             learning_rate: 0.1,
             // Initialize enhanced context tracking
             session_workflows: HashMap::new(),
             temporal_patterns: HashMap::new(),
             context_memory: HashMap::new(),
-        }
+        };
+
+        // Rewrite legacy files immediately so raw commands, output, and context
+        // are removed from disk even before a new interaction is learned.
+        engine.save_data();
+        engine
     }
 
-    fn load_or_create_data(data_file: &PathBuf) -> (
-        Vec<LearningExample>,
-        HashMap<String, NeuralPattern>,
-        HashMap<String, CommandStats>,
-        UserPreferences
-    ) {
-        if let Ok(data) = fs::read_to_string(data_file) {
-            if let Ok(saved_data) = serde_json::from_str::<SavedLearningData>(&data) {
-                return (
-                    saved_data.learning_data,
-                    saved_data.patterns,
-                    saved_data.command_stats,
-                    saved_data.user_preferences,
-                );
-            }
-        }
-
-        // Initialize with empty data
-        (
-            Vec::new(),
-            HashMap::new(),
-            HashMap::new(),
-            UserPreferences::default(),
-        )
+    fn load_or_create_data(data_file: &PathBuf) -> HashMap<String, NeuralPattern> {
+        // Command-derived learning remains memory-only. Older releases wrote
+        // aggregate maps whose keys could still reveal executable names, so
+        // remove those legacy files instead of restoring them.
+        let _ = fs::remove_file(data_file);
+        let _ = fs::remove_file(data_file.with_extension("tmp"));
+        HashMap::new()
     }
 
     /// Add a learning example and update patterns
@@ -160,7 +149,7 @@ impl LearningEngine {
 
         // Enhanced context learning
         self.learn_context_association(&context, success);
-        
+
         // Track temporal patterns
         self.update_temporal_patterns(&input);
 
@@ -173,44 +162,55 @@ impl LearningEngine {
         }
 
         // Save data periodically
-        if self.learning_data.len() % 10 == 0 {
+        if self.learning_data.len().is_multiple_of(10) {
             self.save_data();
         }
     }
 
     /// Update user feedback for a previous interaction
     pub fn update_feedback(&mut self, input: &str, feedback: f32) {
-        if let Some(example) = self.learning_data.iter_mut()
+        if let Some(example) = self
+            .learning_data
+            .iter_mut()
             .rev()
-            .find(|ex| ex.input == input) {
+            .find(|ex| ex.input == input)
+        {
             example.user_feedback = Some(feedback);
-            
-            // Update preferences based on feedback
-            let current_score = self.user_preferences.preferred_commands
-                .entry(input.to_string())
-                .or_insert(0.5);
-            
-            *current_score = (*current_score + feedback) / 2.0;
         }
+
+        // Explicit feedback is useful even when the originating suggestion
+        // was not a completed terminal execution. Keep the preference only in
+        // this process; command-derived strings are never written to disk.
+        let current_score = self
+            .user_preferences
+            .preferred_commands
+            .entry(input.to_string())
+            .or_insert(0.5);
+        *current_score = (*current_score + feedback) / 2.0;
     }
 
     /// Suggest commands based on learned patterns
     pub fn suggest_commands(&self, context: &str, input_prefix: &str, limit: usize) -> Vec<String> {
         let mut suggestions = Vec::new();
         let context_features = self.extract_context_features(context);
-        
+
         // Get suggestions from patterns
         for (pattern_key, pattern) in &self.patterns {
+            if pattern.command.is_empty() || pattern_key.starts_with("workflow:") {
+                continue;
+            }
+
             let similarity = self.calculate_similarity(&context_features, &pattern.input_features);
             if similarity > 0.3 {
-                suggestions.push((pattern_key.clone(), similarity * pattern.confidence));
+                suggestions.push((pattern.command.clone(), similarity * pattern.confidence));
             }
         }
 
         // Sort by relevance and filter by prefix
-        suggestions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        
-        suggestions.into_iter()
+        suggestions.sort_by(|a, b| b.1.total_cmp(&a.1));
+
+        suggestions
+            .into_iter()
             .map(|(cmd, _)| cmd)
             .filter(|cmd| cmd.starts_with(input_prefix))
             .take(limit)
@@ -220,7 +220,7 @@ impl LearningEngine {
     /// Get intelligent completions based on learning
     pub fn get_smart_completions(&self, partial_command: &str, context: &str) -> Vec<String> {
         let mut completions = Vec::new();
-        
+
         // Find similar commands from history
         for stats in self.command_stats.values() {
             if stats.command.starts_with(partial_command) && stats.success_count > 0 {
@@ -240,9 +240,10 @@ impl LearningEngine {
         }
 
         // Sort by relevance
-        completions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        
-        completions.into_iter()
+        completions.sort_by(|a, b| b.1.total_cmp(&a.1));
+
+        completions
+            .into_iter()
             .map(|(cmd, _)| cmd)
             .take(8)
             .collect()
@@ -251,27 +252,45 @@ impl LearningEngine {
     /// Classify command type for better learning
     fn classify_command(&self, command: &str) -> CommandType {
         let cmd_lower = command.to_lowercase();
-        
+
         if cmd_lower.starts_with("git") {
             CommandType::GitOperation
-        } else if cmd_lower.starts_with("ls") || cmd_lower.starts_with("find") || 
-                 cmd_lower.starts_with("cp") || cmd_lower.starts_with("mv") ||
-                 cmd_lower.starts_with("rm") || cmd_lower.starts_with("mkdir") {
+        } else if cmd_lower.starts_with("ls")
+            || cmd_lower.starts_with("find")
+            || cmd_lower.starts_with("cp")
+            || cmd_lower.starts_with("mv")
+            || cmd_lower.starts_with("rm")
+            || cmd_lower.starts_with("mkdir")
+        {
             CommandType::FileManagement
-        } else if cmd_lower.starts_with("ps") || cmd_lower.starts_with("top") ||
-                 cmd_lower.starts_with("htop") || cmd_lower.starts_with("df") {
+        } else if cmd_lower.starts_with("ps")
+            || cmd_lower.starts_with("top")
+            || cmd_lower.starts_with("htop")
+            || cmd_lower.starts_with("df")
+        {
             CommandType::SystemQuery
-        } else if cmd_lower.starts_with("npm") || cmd_lower.starts_with("cargo") ||
-                 cmd_lower.starts_with("node") || cmd_lower.starts_with("python") {
+        } else if cmd_lower.starts_with("npm")
+            || cmd_lower.starts_with("cargo")
+            || cmd_lower.starts_with("node")
+            || cmd_lower.starts_with("python")
+        {
             CommandType::Development
-        } else if cmd_lower.starts_with("ping") || cmd_lower.starts_with("curl") ||
-                 cmd_lower.starts_with("wget") || cmd_lower.starts_with("ssh") {
+        } else if cmd_lower.starts_with("ping")
+            || cmd_lower.starts_with("curl")
+            || cmd_lower.starts_with("wget")
+            || cmd_lower.starts_with("ssh")
+        {
             CommandType::NetworkOperation
-        } else if cmd_lower.starts_with("grep") || cmd_lower.starts_with("sed") ||
-                 cmd_lower.starts_with("awk") || cmd_lower.starts_with("sort") {
+        } else if cmd_lower.starts_with("grep")
+            || cmd_lower.starts_with("sed")
+            || cmd_lower.starts_with("awk")
+            || cmd_lower.starts_with("sort")
+        {
             CommandType::TextProcessing
-        } else if cmd_lower.starts_with("sudo") || cmd_lower.starts_with("systemctl") ||
-                 cmd_lower.starts_with("service") {
+        } else if cmd_lower.starts_with("sudo")
+            || cmd_lower.starts_with("systemctl")
+            || cmd_lower.starts_with("service")
+        {
             CommandType::SystemAdministration
         } else {
             CommandType::Other
@@ -279,8 +298,15 @@ impl LearningEngine {
     }
 
     /// Update command statistics
-    fn update_command_stats(&mut self, command: &str, success: bool, execution_time_ms: Option<u64>) {
-        let stats = self.command_stats.entry(command.to_string())
+    fn update_command_stats(
+        &mut self,
+        command: &str,
+        success: bool,
+        execution_time_ms: Option<u64>,
+    ) {
+        let stats = self
+            .command_stats
+            .entry(command.to_string())
             .or_insert_with(|| CommandStats {
                 command: command.to_string(),
                 frequency: 0,
@@ -315,8 +341,11 @@ impl LearningEngine {
         let input_features = self.extract_input_features(&example.input, &example.context);
         let pattern_key = self.generate_pattern_key(&example.input);
 
-        let pattern = self.patterns.entry(pattern_key)
+        let pattern = self
+            .patterns
+            .entry(pattern_key)
             .or_insert_with(|| NeuralPattern {
+                command: example.input.clone(),
                 input_features: input_features.clone(),
                 output_weights: vec![0.5; input_features.len()],
                 bias: 0.0,
@@ -325,10 +354,14 @@ impl LearningEngine {
                 success_rate: 0.0,
             });
 
+        if pattern.command.is_empty() {
+            pattern.command = example.input.clone();
+        }
+
         // Update pattern using gradient descent-like approach
         pattern.usage_count += 1;
         let success_weight = if example.success { 1.0 } else { -0.5 };
-        
+
         for (i, feature) in input_features.iter().enumerate() {
             if i < pattern.output_weights.len() {
                 pattern.output_weights[i] += self.learning_rate * success_weight * feature;
@@ -337,8 +370,8 @@ impl LearningEngine {
         }
 
         // Update confidence based on success rate
-        let success_rate = pattern.usage_count as f32 / 
-            (pattern.usage_count + if example.success { 0 } else { 1 }) as f32;
+        let success_rate = pattern.usage_count as f32
+            / (pattern.usage_count + if example.success { 0 } else { 1 }) as f32;
         pattern.confidence = (pattern.confidence + success_rate) / 2.0;
         pattern.success_rate = success_rate;
     }
@@ -346,25 +379,25 @@ impl LearningEngine {
     /// Extract features from input and context
     fn extract_input_features(&self, input: &str, context: &str) -> Vec<f32> {
         let mut features = Vec::new();
-        
+
         // Basic command features
         features.push(input.len() as f32 / 100.0); // Normalized length
         features.push(input.split_whitespace().count() as f32 / 10.0); // Word count
-        
+
         // Command type features
         let cmd_type = self.classify_command(input);
         features.extend(self.command_type_to_features(&cmd_type));
-        
+
         // Context features
         features.extend(self.extract_context_features(context));
-        
+
         features
     }
 
     /// Extract features from context
     fn extract_context_features(&self, context: &str) -> Vec<f32> {
         let mut features = vec![0.0; 10]; // Fixed size feature vector
-        
+
         // Working directory indicators
         if context.contains("/home") || context.contains("/Users") {
             features[0] = 1.0;
@@ -375,7 +408,7 @@ impl LearningEngine {
         if context.contains(".git") {
             features[2] = 1.0;
         }
-        
+
         // Recent command patterns
         if context.contains("git") {
             features[3] = 1.0;
@@ -386,7 +419,7 @@ impl LearningEngine {
         if context.contains("error") || context.contains("failed") {
             features[5] = 1.0;
         }
-        
+
         // File type indicators
         if context.contains(".js") || context.contains(".ts") {
             features[6] = 1.0;
@@ -397,18 +430,18 @@ impl LearningEngine {
         if context.contains(".rs") {
             features[8] = 1.0;
         }
-        
+
         // Time-based features (simplified)
         let hour = Utc::now().hour();
         features[9] = (hour as f32) / 24.0; // Normalized hour
-        
+
         features
     }
 
     /// Convert command type to feature vector
     fn command_type_to_features(&self, cmd_type: &CommandType) -> Vec<f32> {
         let mut features = vec![0.0; 8];
-        
+
         match cmd_type {
             CommandType::FileManagement => features[0] = 1.0,
             CommandType::GitOperation => features[1] = 1.0,
@@ -419,7 +452,7 @@ impl LearningEngine {
             CommandType::SystemAdministration => features[6] = 1.0,
             CommandType::Other => features[7] = 1.0,
         }
-        
+
         features
     }
 
@@ -429,11 +462,11 @@ impl LearningEngine {
         if words.is_empty() {
             return "empty".to_string();
         }
-        
+
         // Group by first word and command structure
         let base_cmd = words[0];
         let arg_count = words.len() - 1;
-        
+
         format!("{}_{}", base_cmd, arg_count)
     }
 
@@ -442,30 +475,35 @@ impl LearningEngine {
         if features1.len() != features2.len() {
             return 0.0;
         }
-        
-        let dot_product: f32 = features1.iter()
+
+        let dot_product: f32 = features1
+            .iter()
             .zip(features2.iter())
             .map(|(a, b)| a * b)
             .sum();
-        
+
         let norm1: f32 = features1.iter().map(|x| x * x).sum::<f32>().sqrt();
         let norm2: f32 = features2.iter().map(|x| x * x).sum::<f32>().sqrt();
-        
+
         if norm1 == 0.0 || norm2 == 0.0 {
             return 0.0;
         }
-        
+
         dot_product / (norm1 * norm2)
     }
 
     /// Get analytics about user behavior
     pub fn get_user_analytics(&self) -> UserAnalytics {
-        let total_commands = self.command_stats.values()
+        let total_commands = self
+            .command_stats
+            .values()
             .map(|stats| stats.frequency)
             .sum::<u32>();
-        
+
         let success_rate = if total_commands > 0 {
-            let total_successes: u32 = self.command_stats.values()
+            let total_successes: u32 = self
+                .command_stats
+                .values()
                 .map(|stats| stats.success_count)
                 .sum();
             total_successes as f32 / total_commands as f32
@@ -473,14 +511,14 @@ impl LearningEngine {
             0.0
         };
 
-        let mut most_used_commands: Vec<_> = self.command_stats.values()
-            .collect();
-        most_used_commands.sort_by(|a, b| b.frequency.cmp(&a.frequency));
+        let mut most_used_commands: Vec<_> = self.command_stats.values().collect();
+        most_used_commands.sort_by_key(|command| std::cmp::Reverse(command.frequency));
 
         UserAnalytics {
             total_commands,
             success_rate,
-            most_used_commands: most_used_commands.into_iter()
+            most_used_commands: most_used_commands
+                .into_iter()
                 .take(10)
                 .map(|stats| (stats.command.clone(), stats.frequency))
                 .collect(),
@@ -491,28 +529,37 @@ impl LearningEngine {
 
     /// Save learning data to disk
     pub fn save_data(&self) {
-        let saved_data = SavedLearningData {
-            learning_data: self.learning_data.clone(),
-            patterns: self.patterns.clone(),
-            command_stats: self.command_stats.clone(),
-            user_preferences: self.user_preferences.clone(),
-        };
+        let _ = fs::remove_file(&self.data_file);
+        let _ = fs::remove_file(self.data_file.with_extension("tmp"));
+    }
 
-        if let Ok(json) = serde_json::to_string_pretty(&saved_data) {
-            let _ = fs::write(&self.data_file, json);
-        }
+    /// Forget all command-derived adaptive state immediately. Durable command
+    /// continuity lives only in the encrypted history database and can be
+    /// rebuilt from it on the next launch.
+    pub fn clear_memory(&mut self) {
+        self.learning_data.clear();
+        self.patterns.clear();
+        self.command_stats.clear();
+        self.user_preferences = UserPreferences::default();
+        self.session_workflows.clear();
+        self.temporal_patterns.clear();
+        self.context_memory.clear();
+        self.save_data();
     }
 
     /// Enhanced learning: Track session workflows for pattern recognition
     pub fn track_session_workflow(&mut self, session_id: &str, command: &str) {
-        let workflow = self.session_workflows.entry(session_id.to_string()).or_insert_with(Vec::new);
+        let workflow = self
+            .session_workflows
+            .entry(session_id.to_string())
+            .or_default();
         workflow.push(command.to_string());
-        
+
         // Keep only last 50 commands per session to prevent memory bloat
         if workflow.len() > 50 {
             workflow.remove(0);
         }
-        
+
         // If we have enough commands, analyze workflow patterns
         if workflow.len() >= 3 {
             // Clone the workflow to avoid borrow checker issues
@@ -525,19 +572,19 @@ impl LearningEngine {
     fn learn_context_association(&mut self, context: &str, success: bool) {
         let context_key = self.extract_context_signature(context);
         let weight_change = if success { 0.1 } else { -0.05 };
-        
+
         let current_weight = self.context_memory.get(&context_key).unwrap_or(&0.5);
         let new_weight = (current_weight + weight_change).clamp(0.0, 1.0);
-        
+
         self.context_memory.insert(context_key, new_weight);
     }
 
     /// Track when commands are used for temporal pattern recognition
     fn update_temporal_patterns(&mut self, command: &str) {
         let pattern_key = self.generate_pattern_key(command);
-        let timestamps = self.temporal_patterns.entry(pattern_key).or_insert_with(Vec::new);
+        let timestamps = self.temporal_patterns.entry(pattern_key).or_default();
         timestamps.push(Utc::now());
-        
+
         // Keep only last 100 timestamps per command
         if timestamps.len() > 100 {
             timestamps.remove(0);
@@ -546,19 +593,23 @@ impl LearningEngine {
 
     /// Analyze workflow patterns from session commands
     fn analyze_workflow_patterns(&mut self, workflow: &[String]) {
-        if workflow.len() < 3 { return; }
-        
+        if workflow.len() < 3 {
+            return;
+        }
+
         // Look for 3-command sequences
         for window in workflow.windows(3) {
-            let pattern_key = format!("workflow:{}->{}->{}",
+            let pattern_key = format!(
+                "workflow:{}->{}->{}",
                 self.generate_pattern_key(&window[0]),
                 self.generate_pattern_key(&window[1]),
                 self.generate_pattern_key(&window[2])
             );
-            
+
             // Create or update workflow pattern
             let workflow_pattern = self.patterns.entry(pattern_key).or_insert_with(|| {
                 NeuralPattern {
+                    command: window[2].clone(),
                     input_features: vec![1.0, 1.0, 1.0], // Simple workflow indicator
                     output_weights: vec![0.8, 0.8, 0.8], // High initial confidence for workflows
                     bias: 0.1,
@@ -567,7 +618,11 @@ impl LearningEngine {
                     success_rate: 0.8, // Assume workflows are generally successful
                 }
             });
-            
+
+            if workflow_pattern.command.is_empty() {
+                workflow_pattern.command = window[2].clone();
+            }
+
             workflow_pattern.usage_count += 1;
             workflow_pattern.confidence = (workflow_pattern.confidence + 0.1).min(1.0);
         }
@@ -576,27 +631,44 @@ impl LearningEngine {
     /// Extract a signature from context for memory association
     fn extract_context_signature(&self, context: &str) -> String {
         let mut signature_parts = Vec::new();
-        
+
         // Extract key context elements
-        if context.contains("git") { signature_parts.push("git"); }
-        if context.contains("npm") || context.contains("node") { signature_parts.push("node"); }
-        if context.contains("python") || context.contains(".py") { signature_parts.push("python"); }
-        if context.contains("rust") || context.contains(".rs") { signature_parts.push("rust"); }
-        if context.contains("error") || context.contains("failed") { signature_parts.push("error"); }
-        if context.contains("/home") || context.contains("/Users") { signature_parts.push("home"); }
-        
+        if context.contains("git") {
+            signature_parts.push("git");
+        }
+        if context.contains("npm") || context.contains("node") {
+            signature_parts.push("node");
+        }
+        if context.contains("python") || context.contains(".py") {
+            signature_parts.push("python");
+        }
+        if context.contains("rust") || context.contains(".rs") {
+            signature_parts.push("rust");
+        }
+        if context.contains("error") || context.contains("failed") {
+            signature_parts.push("error");
+        }
+        if context.contains("/home") || context.contains("/Users") {
+            signature_parts.push("home");
+        }
+
         signature_parts.join("_")
     }
 
     /// Get enhanced suggestions considering session context and temporal patterns
-    pub fn get_enhanced_suggestions(&self, context: &str, session_id: &str, limit: usize) -> Vec<String> {
+    pub fn get_enhanced_suggestions(
+        &self,
+        context: &str,
+        session_id: &str,
+        limit: usize,
+    ) -> Vec<String> {
         let mut suggestions = Vec::new();
         let context_features = self.extract_context_features(context);
         let context_signature = self.extract_context_signature(context);
-        
+
         // Boost suggestions based on context memory
         let context_boost = self.context_memory.get(&context_signature).unwrap_or(&0.5);
-        
+
         // Check for workflow patterns from current session
         if let Some(session_workflow) = self.session_workflows.get(session_id) {
             if session_workflow.len() >= 2 {
@@ -605,20 +677,25 @@ impl LearningEngine {
                 suggestions.extend(workflow_suggestions);
             }
         }
-        
+
         // Get regular pattern-based suggestions with context boost
         for (pattern_key, pattern) in &self.patterns {
+            if pattern.command.is_empty() || pattern_key.starts_with("workflow:") {
+                continue;
+            }
+
             let similarity = self.calculate_similarity(&context_features, &pattern.input_features);
             let boosted_confidence = pattern.confidence * (1.0 + context_boost);
-            
+
             if similarity > 0.3 {
-                suggestions.push((pattern_key.clone(), similarity * boosted_confidence));
+                suggestions.push((pattern.command.clone(), similarity * boosted_confidence));
             }
         }
 
         // Sort by relevance and return top suggestions
-        suggestions.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-        suggestions.into_iter()
+        suggestions.sort_by(|a, b| b.1.total_cmp(&a.1));
+        suggestions
+            .into_iter()
             .map(|(cmd, _)| cmd)
             .take(limit)
             .collect()
@@ -626,27 +703,45 @@ impl LearningEngine {
 
     /// Get workflow-based suggestions
     fn get_workflow_suggestions(&self, recent_commands: &[String]) -> Vec<(String, f32)> {
-        let mut suggestions = Vec::new();
-        
-        for (pattern_key, pattern) in &self.patterns {
-            if pattern_key.starts_with("workflow:") && pattern.usage_count > 2 {
-                // Simple workflow matching - could be more sophisticated
-                let workflow_confidence = pattern.confidence * 1.2; // Boost workflow suggestions
-                suggestions.push((pattern_key.clone(), workflow_confidence));
+        if recent_commands.len() < 2 {
+            return Vec::new();
+        }
+
+        let recent_keys: Vec<String> = recent_commands
+            .iter()
+            .rev()
+            .take(2)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .map(|command| self.generate_pattern_key(command))
+            .collect();
+        let mut matches: HashMap<String, (u32, u32)> = HashMap::new();
+
+        for window in self.learning_data.windows(3) {
+            let first_key = self.generate_pattern_key(&window[0].input);
+            let second_key = self.generate_pattern_key(&window[1].input);
+
+            if first_key == recent_keys[0] && second_key == recent_keys[1] {
+                let entry = matches.entry(window[2].input.clone()).or_insert((0, 0));
+                entry.0 += 1;
+                if window[2].success {
+                    entry.1 += 1;
+                }
             }
         }
-        
+
+        let mut suggestions: Vec<(String, f32)> = matches
+            .into_iter()
+            .map(|(command, (count, successes))| {
+                let success_rate = successes as f32 / count as f32;
+                let confidence = (0.5 + count as f32 * 0.05 + success_rate * 0.3).min(0.99);
+                (command, confidence)
+            })
+            .collect();
+        suggestions.sort_by(|a, b| b.1.total_cmp(&a.1));
         suggestions
     }
-}
-
-/// Data structure for saving/loading
-#[derive(Serialize, Deserialize)]
-struct SavedLearningData {
-    learning_data: Vec<LearningExample>,
-    patterns: HashMap<String, NeuralPattern>,
-    command_stats: HashMap<String, CommandStats>,
-    user_preferences: UserPreferences,
 }
 
 /// User analytics for insights
@@ -662,5 +757,95 @@ pub struct UserAnalytics {
 impl Drop for LearningEngine {
     fn drop(&mut self) {
         self.save_data();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temporary_data_directory() -> PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("ph7console-learning-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&path).expect("create learning test directory");
+        path
+    }
+
+    #[test]
+    fn command_learning_is_session_only_and_removes_legacy_files() {
+        let data_directory = temporary_data_directory();
+        let data_file = data_directory.join("learning_data.json");
+        fs::write(&data_file, r#"{"patterns":{"curl_3":{}}}"#).expect("write legacy learning data");
+        let mut engine = LearningEngine::new(data_directory.clone());
+
+        assert!(!data_file.exists());
+
+        engine.learn_from_interaction(
+            "curl --header 'Authorization: TOP_SECRET_TOKEN' example.test".to_string(),
+            "TOP_SECRET_OUTPUT".to_string(),
+            "TOP_SECRET_CONTEXT".to_string(),
+            true,
+            Some(25),
+        );
+        engine.save_data();
+
+        assert!(!data_file.exists());
+
+        let restored = LearningEngine::new(data_directory.clone());
+        assert!(restored.learning_data.is_empty());
+        assert!(restored.command_stats.is_empty());
+
+        fs::remove_dir_all(data_directory).expect("remove learning test directory");
+    }
+
+    #[test]
+    fn suggests_the_actual_next_command_from_a_learned_workflow() {
+        let data_directory = temporary_data_directory();
+        let mut engine = LearningEngine::new(data_directory.clone());
+
+        for command in ["git status", "git add README.md", "git commit -m docs"] {
+            engine.learn_from_interaction(
+                command.to_string(),
+                String::new(),
+                "git repository".to_string(),
+                true,
+                Some(10),
+            );
+        }
+
+        let recent = vec!["git status".to_string(), "git add CHANGELOG.md".to_string()];
+        let suggestions = engine.get_workflow_suggestions(&recent);
+
+        assert_eq!(
+            suggestions.first().map(|item| item.0.as_str()),
+            Some("git commit -m docs")
+        );
+
+        fs::remove_dir_all(data_directory).expect("remove learning test directory");
+    }
+
+    #[test]
+    fn clearing_memory_removes_every_adaptive_signal() {
+        let data_directory = temporary_data_directory();
+        let mut engine = LearningEngine::new(data_directory.clone());
+        engine.learn_from_interaction(
+            "git status".to_string(),
+            String::new(),
+            "git repository".to_string(),
+            true,
+            Some(10),
+        );
+        engine.track_session_workflow("session", "git status");
+        engine.update_feedback("git status", 1.0);
+
+        engine.clear_memory();
+
+        let analytics = engine.get_user_analytics();
+        assert_eq!(analytics.total_commands, 0);
+        assert_eq!(analytics.patterns_learned, 0);
+        assert!(engine.learning_data.is_empty());
+        assert!(engine.session_workflows.is_empty());
+        assert!(engine.user_preferences.preferred_commands.is_empty());
+        fs::remove_dir_all(data_directory).expect("remove learning test directory");
     }
 }

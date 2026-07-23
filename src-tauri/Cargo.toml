@@ -1,29 +1,35 @@
 [package]
 name = "ph7-console"
-version = "0.1.0"
-description = "ML-First Terminal with Local AI"
+version = "1.0.0"
+description = "Private command console with local assistance"
 authors = ["pH7Console Team"]
 license = "MIT"
 repository = "https://github.com/EfficientTools/pH7Console"
 default-run = "ph7-console"
 edition = "2021"
-rust-version = "1.70"
+# Keep this aligned with the highest MSRV in Cargo.lock. Tauri 2's current
+# transitive plist/serde_with/time stack requires Rust 1.88.
+rust-version = "1.88"
 
 [build-dependencies]
 tauri-build = { version = "2.0", features = [] }
+cc = "1.1"
 
 [dependencies]
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "2.0", features = [] }
-tauri-plugin-shell = "2.0"
-tauri-plugin-fs = "2.0"
-tauri-plugin-process = "2.0"
+tauri-plugin-dialog = "2.0"
+tauri-plugin-deep-link = "2.4.9"
 # Date/time utilities
 chrono = { version = "0.4", features = ["serde"] }
 
 # Regex for parsing URLs and text
 regex = "1.10"
+# SQLCipher encrypts the complete history database (including FTS and WAL
+# pages). On Apple platforms the bundled build uses CommonCrypto, avoiding a
+# non-system dynamic dependency in the App Store bundle.
+rusqlite = { version = "0.40.1", features = ["bundled-sqlcipher"] }
 
 # Local AI/ML Dependencies - using lightweight approach for better compatibility
 # candle-core = "0.6"
@@ -32,19 +38,26 @@ regex = "1.10"
 # tokenizers = "0.19"
 # hf-hub = "0.3"
 anyhow = "1.0"
+base64 = "0.22"
 
-# Terminal/PTY handling
-portable-pty = "0.8"
+# Persistent cross-platform pseudo terminals. Every tab owns one long-lived
+# shell so TTY applications, job control, signals, and shell state work.
+portable-pty = "0.9.0"
+shell-words = "1.1"
 tokio = { version = "1.0", features = ["full"] }
 
 # System integration
-sysinfo = "0.30"
 dirs = "5.0"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 
-# Async utilities
-futures = "0.3"
-async-trait = "0.1"
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Native SecItem/SecRandom wrappers for the per-install history key. The
+# OSX_10_15 feature exposes the data-protection Keychain selector; the app's
+# deployment target is macOS 13.3.
+security-framework = { version = "3.7.0", features = ["OSX_10_15"] }
 
 [features]
 # This feature is used for production builds or when `devPath` points to the filesystem and the built-in dev server is disabled.
