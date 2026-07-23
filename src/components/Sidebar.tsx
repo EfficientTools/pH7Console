@@ -1,27 +1,22 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useTerminalStore } from '../store/terminalStore';
-import { Terminal, Plus, X, Settings as SettingsIcon, Folder } from 'lucide-react';
+import { message } from '@tauri-apps/plugin-dialog';
+import { Terminal, Plus, X, Settings as SettingsIcon, Folder, FolderOpen } from 'lucide-react';
 import { Settings } from './Settings';
 import { FileExplorer } from './FileExplorer';
 
 export const Sidebar: React.FC = () => {
-  const { sessions, activeSession, setActiveSession, createSession, closeSession, updateSessionTitle } = useTerminalStore();
+  const { sessions, activeSession, setActiveSession, createSession, closeSession, updateSessionTitle, selectWorkspace } = useTerminalStore();
   const [showSettings, setShowSettings] = useState(false);
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
   const [activeTab, setActiveTab] = useState<'terminals' | 'explorer'>('terminals');
-  const [currentExplorerPath, setCurrentExplorerPath] = useState('/Users/pierre-ai-engineer/Code/pH7Console');
+  const [currentExplorerPath, setCurrentExplorerPath] = useState('~');
 
-  // Debug: Log important state values
   useEffect(() => {
-    console.log(`🔧 Sidebar State Debug:`, {
-      activeTab,
-      currentExplorerPath,
-      activeSession,
-      hasActiveSession: !!activeSession,
-      sessionsCount: sessions.length
-    });
-  }, [activeTab, currentExplorerPath, activeSession, sessions]);
+    const activeWorkingDirectory = sessions.find(session => session.id === activeSession)?.working_directory;
+    setCurrentExplorerPath(activeWorkingDirectory ?? '~');
+  }, [activeSession, sessions]);
 
   const handleCreateSession = async () => {
     // Generate a unique name based on session count
@@ -38,10 +33,10 @@ export const Sidebar: React.FC = () => {
     await closeSession(sessionId);
   };
 
-  const handleDoubleClick = (session: { id: string; title: string }) => {
+  const handleDoubleClick = useCallback((session: { id: string; title: string }) => {
     setEditingSessionId(session.id);
     setEditingTitle(session.title);
-  };
+  }, []);
 
   const handleTitleSubmit = async (sessionId: string) => {
     if (editingTitle.trim() && editingTitle !== sessions.find(s => s.id === sessionId)?.title) {
@@ -87,13 +82,14 @@ export const Sidebar: React.FC = () => {
   // Handle global keyboard events for editing active session
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (showSettings) return;
+
       // FIRST: Check if ANY input field has focus and skip ALL arrow key handling
       if ((e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
         const activeElement = document.activeElement;
         
         // If ANY input or textarea is focused, completely ignore arrow keys
         if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
-          console.log('🔇 Sidebar: Input detected, completely ignoring arrow key:', e.key);
           return; // Exit immediately, don't process any arrow key logic
         }
       }
@@ -125,20 +121,12 @@ export const Sidebar: React.FC = () => {
           activeElement.tagName === 'INPUT' && activeElement.closest('.terminal')
         );
         
-        console.log('🎯 Terminal input check:', {
-          isTerminalInput,
-          hasTerminalInputClass: activeElement?.classList.contains('terminal-input'),
-          isInputInTerminal: activeElement?.tagName === 'INPUT' && !!activeElement.closest('.terminal')
-        });
-        
         // If terminal input is focused, NEVER interfere with arrow keys
         if (isTerminalInput) {
-          console.log('✅ Sidebar: Terminal input detected - allowing arrow keys to pass through');
           return; // Don't prevent default, don't capture - let Terminal handle it
         }
         
         // Only capture if we're sure it's NOT terminal input
-        console.log('🚫 Sidebar: Capturing arrow key for session navigation');
         e.preventDefault();
         e.stopPropagation(); // Stop event from continuing
 
@@ -159,7 +147,7 @@ export const Sidebar: React.FC = () => {
     return () => {
       document.removeEventListener('keydown', handleGlobalKeyDown, false);
     };
-  }, [editingSessionId, activeSession, sessions, handleDoubleClick, setActiveSession]);
+  }, [editingSessionId, activeSession, sessions, handleDoubleClick, setActiveSession, showSettings]);
 
   return (
     <>
@@ -170,9 +158,11 @@ export const Sidebar: React.FC = () => {
             <h1 className="font-semibold text-terminal-text">pH7Console</h1>
             {activeTab === 'terminals' && (
               <button
+                type="button"
                 onClick={handleCreateSession}
                 className="p-1 hover:bg-terminal-border rounded transition-colors focus-ring"
-                title="New Terminal"
+                title="New terminal (⌘T)"
+                aria-label="New terminal"
               >
                 <Plus className="w-4 h-4 text-terminal-muted" />
               </button>
@@ -180,10 +170,13 @@ export const Sidebar: React.FC = () => {
           </div>
           
           {/* Tab Navigation */}
-          <div className="flex bg-terminal-bg rounded-lg p-1">
+          <div className="flex bg-terminal-bg rounded-lg p-1" role="tablist" aria-label="Sidebar view">
             <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'terminals'}
               onClick={() => setActiveTab('terminals')}
-              className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ai-primary ${
                 activeTab === 'terminals'
                   ? 'bg-ai-primary text-white'
                   : 'text-terminal-muted hover:text-terminal-text hover:bg-terminal-border'
@@ -193,8 +186,11 @@ export const Sidebar: React.FC = () => {
               Terminals
             </button>
             <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'explorer'}
               onClick={() => setActiveTab('explorer')}
-              className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+              className={`flex-1 flex items-center justify-center gap-2 px-3 py-1.5 rounded text-sm font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ai-primary ${
                 activeTab === 'explorer'
                   ? 'bg-ai-primary text-white'
                   : 'text-terminal-muted hover:text-terminal-text hover:bg-terminal-border'
@@ -216,6 +212,7 @@ export const Sidebar: React.FC = () => {
                   <Terminal className="w-8 h-8 mx-auto mb-2 opacity-50" />
                   <p className="text-sm mb-3">No terminal sessions</p>
                   <button
+                    type="button"
                     onClick={handleCreateSession}
                     className="px-4 py-2 bg-ai-primary text-white rounded-lg hover:bg-ai-primary/90 transition-colors text-sm font-medium"
                   >
@@ -229,8 +226,24 @@ export const Sidebar: React.FC = () => {
                       key={session.id}
                       onClick={() => setActiveSession(session.id)}
                       onDoubleClick={() => handleDoubleClick(session)}
+                      onKeyDown={(event) => {
+                        if (event.target !== event.currentTarget) return;
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          setActiveSession(session.id);
+                        } else if (event.key === 'F2') {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          handleDoubleClick(session);
+                        }
+                      }}
+                      role="button"
+                      tabIndex={0}
+                      aria-current={session.id === activeSession ? 'true' : undefined}
+                      aria-label={`${session.title}, ${session.working_directory}`}
                       className={`
-                        group flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors
+                        group flex items-center justify-between p-3 rounded-lg cursor-pointer transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ai-primary
                         ${session.id === activeSession
                           ? 'bg-ai-primary text-white'
                           : 'text-terminal-text hover:bg-terminal-border'
@@ -269,9 +282,11 @@ export const Sidebar: React.FC = () => {
 
                       {sessions.length > 1 && (
                         <button
+                          type="button"
                           onClick={(e) => handleCloseSession(session.id, e)}
-                          className="opacity-0 group-hover:opacity-100 p-1 hover:bg-black/20 rounded transition-all"
+                          className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 p-1 hover:bg-black/20 rounded transition-all focus:opacity-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
                           title="Close session"
+                          aria-label={`Close ${session.title}`}
                         >
                           <X className="w-3 h-3" />
                         </button>
@@ -287,12 +302,10 @@ export const Sidebar: React.FC = () => {
               currentPath={currentExplorerPath}
               activeSessionId={activeSession || undefined}
               onPathChange={(newPath) => {
-                console.log(`📂 Sidebar: Changing explorer path to: ${newPath}`);
                 setCurrentExplorerPath(newPath);
                 // Note: FileExplorer already handles terminal directory change
               }}
-              onFileSelect={(filePath) => {
-                console.log('File selected:', filePath);
+              onFileSelect={() => {
                 // Here you could implement additional file opening functionality
                 // For example, opening files in an editor or showing file contents
               }}
@@ -301,8 +314,33 @@ export const Sidebar: React.FC = () => {
         </div>
 
         {/* Footer */}
-        <div className="p-4 border-t border-terminal-border">
+        <div className="p-4 border-t border-terminal-border space-y-1">
           <button
+            type="button"
+            onClick={async () => {
+              try {
+                const path = await selectWorkspace();
+                if (path) {
+                  setCurrentExplorerPath(path);
+                  setActiveTab('explorer');
+                }
+              } catch (error) {
+                const detail = error instanceof Error ? error.message : String(error);
+                await message(`The selected folder could not be opened.\n\n${detail}`, {
+                  title: 'Workspace Access Failed',
+                  kind: 'error',
+                });
+              }
+            }}
+            disabled={!activeSession}
+            className="w-full flex items-center space-x-2 p-2 text-terminal-muted hover:text-terminal-text hover:bg-terminal-border rounded transition-colors focus-ring disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Choose a folder the sandboxed terminal can access"
+          >
+            <FolderOpen className="w-4 h-4" />
+            <span className="text-sm">Open Workspace</span>
+          </button>
+          <button
+            type="button"
             onClick={handleSettingsClick}
             className="w-full flex items-center space-x-2 p-2 text-terminal-muted hover:text-terminal-text hover:bg-terminal-border rounded transition-colors focus-ring"
           >

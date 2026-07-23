@@ -1,851 +1,850 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { useTerminalStore } from '../store/terminalStore';
-import { useAIStore } from '../store/aiStore';
-import { useHotkeys } from 'react-hotkeys-hook';
-import { Terminal as TerminalIcon, Zap, History } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Channel, invoke } from '@tauri-apps/api/core';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { FitAddon } from '@xterm/addon-fit';
+import { SearchAddon } from '@xterm/addon-search';
+import { WebLinksAddon } from '@xterm/addon-web-links';
+import { Terminal as XTermTerminal } from '@xterm/xterm';
+import {
+  ChevronDown,
+  ChevronUp,
+  Copy,
+  FolderOpen,
+  History,
+  Search,
+  RotateCcw,
+  Trash2,
+  X,
+} from 'lucide-react';
+import '@xterm/xterm/css/xterm.css';
+
+import { useSettingsStore } from '../store/settingsStore';
+import { CommandExecution, useTerminalStore } from '../store/terminalStore';
+import { parseShellCommandEvent } from '../utils/shellIntegration';
+import { hasUnsafeTerminalCharacters } from '../utils/terminalInput';
 import { HistoryModal } from './HistoryModal';
 import TerminalHeader from './TerminalHeader';
 
-export const Terminal: React.FC = () => {
-  const [input, setInput] = useState('');
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const [completions, setCompletions] = useState<string[]>([]);
-  const [selectedCompletion, setSelectedCompletion] = useState(0);
-  const [originalNaturalLanguage, setOriginalNaturalLanguage] = useState<string | null>(null);
-  const [showHistoryModal, setShowHistoryModal] = useState(false);
-  const [hoveredCommand, setHoveredCommand] = useState<string | null>(null);
-  const [commandExplanation, setCommandExplanation] = useState<string | null>(null);
-  const [historyIndex, setHistoryIndex] = useState(-1);
-  const [historyCommands, setHistoryCommands] = useState<string[]>([]);
-  const [originalInput, setOriginalInput] = useState('');
-  const [currentWorkingDir, setCurrentWorkingDir] = useState<string>('~');
+interface TerminalOutputEvent {
+  sessionId: string;
+  sequence: number;
+  dataBase64: string;
+}
 
-  const inputRef = useRef<HTMLInputElement>(null);
-  const terminalRef = useRef<HTMLDivElement>(null);
+interface TerminalOutputChunk {
+  sequence: number;
+  data: Uint8Array;
+}
 
-  const {
-    activeSession,
-    commandHistory,
-    executeCommand,
-    clearHistory,
-    isExecuting,
-  } = useTerminalStore();
+interface TerminalExitEvent {
+  sessionId: string;
+  exitCode: number;
+  signal?: string;
+}
 
-  const {
-    isModelLoaded,
-    getCompletions,
-    getSuggestions,
-    explainCommand,
-    translateNaturalLanguage,
-    addSuggestion,
-  } = useAIStore();
+interface TerminalSnapshot {
+  dataBase64: string;
+  lastSequence: number;
+  isRunning: boolean;
+  processId?: number;
+}
 
-  // Load command history for navigation
+type SessionStatus = 'connecting' | 'running' | 'exited' | 'error';
+
+interface TerminalController {
+  clear: () => void;
+  copySelection: () => Promise<void>;
+  findNext: (query: string) => boolean;
+  findPrevious: (query: string) => boolean;
+  fitAndFocus: () => void;
+}
+
+interface InputMessage {
+  kind: 'text' | 'binary';
+  text?: string;
+  bytes?: number[];
+  byteLength: number;
+}
+
+interface LiveTerminalSessionProps {
+  active: boolean;
+  fontFamily: string;
+  fontSize: number;
+  onController: (sessionId: string, controller: TerminalController | null) => void;
+  onCommandCompleted: (execution: CommandExecution) => void;
+  onStatusChange: (sessionId: string, status: SessionStatus) => void;
+  onWorkingDirectory: (sessionId: string, workingDirectory: string) => void;
+  sessionId: string;
+}
+
+const TERMINAL_THEME = {
+  background: '#0a0d12',
+  foreground: '#e8edf4',
+  cursor: '#7c6df2',
+  cursorAccent: '#0a0d12',
+  selectionBackground: '#6d5df044',
+  selectionInactiveBackground: '#6d5df022',
+  black: '#151922',
+  red: '#ff6b7a',
+  green: '#64d98b',
+  yellow: '#f4c95d',
+  blue: '#6ca8ff',
+  magenta: '#b88cff',
+  cyan: '#5dd6d0',
+  white: '#d8dee9',
+  brightBlack: '#677080',
+  brightRed: '#ff8995',
+  brightGreen: '#83e5a2',
+  brightYellow: '#ffdb7a',
+  brightBlue: '#8ebcff',
+  brightMagenta: '#caa5ff',
+  brightCyan: '#7ce4de',
+  brightWhite: '#ffffff',
+};
+
+const MAX_PENDING_INPUT_BYTES = 2 * 1024 * 1024;
+const MAX_PENDING_OUTPUT_BYTES = 8 * 1024 * 1024;
+const MAX_TEXT_INPUT_CHARS = 128 * 1024;
+
+function decodeBase64(value: string): Uint8Array {
+  if (!value) return new Uint8Array();
+  const binary = window.atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  return bytes;
+}
+
+function pathFromOsc7(value: string): string | null {
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'file:') return null;
+    return decodeURIComponent(url.pathname);
+  } catch {
+    return null;
+  }
+}
+
+function decodeStreamFrame(payload: ArrayBuffer | Uint8Array): TerminalOutputChunk | null {
+  const bytes = payload instanceof Uint8Array ? payload : new Uint8Array(payload);
+  if (bytes.length < 9 || bytes[0] !== 1) return null;
+  let sequence = 0;
+  for (let index = 1; index <= 8; index += 1) {
+    sequence = sequence * 256 + bytes[index];
+  }
+  return { sequence, data: bytes.slice(9) };
+}
+
+const LiveTerminalSession: React.FC<LiveTerminalSessionProps> = ({
+  active,
+  fontFamily,
+  fontSize,
+  onController,
+  onCommandCompleted,
+  onStatusChange,
+  onWorkingDirectory,
+  sessionId,
+}) => {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const terminalRef = useRef<XTermTerminal | null>(null);
+  const fitAddonRef = useRef<FitAddon | null>(null);
+  const webglAddonRef = useRef<{ dispose: () => void } | null>(null);
+  const activeRef = useRef(active);
+  const [terminalGeneration, setTerminalGeneration] = useState(0);
+
   useEffect(() => {
-    const loadCommandHistory = async () => {
-      if (activeSession) {
-        try {
-          const history = await invoke<string[]>('get_command_history_for_navigation', {
-            sessionId: activeSession,
-          });
+    activeRef.current = active;
+    const terminal = terminalRef.current;
+    const fitAddon = fitAddonRef.current;
+    if (!terminal || !fitAddon) return;
+    terminal.options.cursorBlink = active;
+    if (!active) return;
 
-          // Backend already returns in reverse chronological order (most recent first)
-          setHistoryCommands(history);
-        } catch (error) {
-          console.error('Failed to load command history:', error);
-        }
-      }
-    };
+    const frame = window.requestAnimationFrame(() => {
+      fitAddon.fit();
+      terminal.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [active]);
 
-    loadCommandHistory();
-    // Reload history whenever command history changes
-  }, [activeSession, commandHistory.length]);
-
-  // Auto-focus input when component mounts and when app becomes active
   useEffect(() => {
-    const focusInput = () => {
-      if (inputRef.current) {
-        inputRef.current.focus();
-      }
-    };
+    let cancelled = false;
+    const terminal = terminalRef.current;
 
-    focusInput();
-
-    // Focus when clicking anywhere in the terminal area
-    const handleTerminalClick = () => {
-      focusInput();
-    };
-
-    const terminalElement = terminalRef.current;
-    if (terminalElement) {
-      terminalElement.addEventListener('click', handleTerminalClick);
-    }
-
-    // Focus when window regains focus
-    window.addEventListener('focus', focusInput);
-
-    return () => {
-      if (terminalElement) {
-        terminalElement.removeEventListener('click', handleTerminalClick);
-      }
-      window.removeEventListener('focus', focusInput);
-    };
-  }, [activeSession]);
-
-  // Re-focus when activeSession changes
-  useEffect(() => {
-    if (inputRef.current && activeSession) {
-      setTimeout(() => {
-        inputRef.current?.focus();
-      }, 100);
-    }
-  }, [activeSession]);
-
-  // Scroll to bottom when new commands are added
-  useEffect(() => {
-    if (terminalRef.current) {
-      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
-    }
-  }, [commandHistory]);
-
-  // Update current working directory based on commands
-  useEffect(() => {
-    const updateWorkingDirectory = async () => {
-      try {
-        // Get the actual current working directory from the terminal session
-        if (activeSession && commandHistory.length > 0) {
-          // Look for the most recent command that might have changed directory
-          const recentCommands = commandHistory.slice(-5); // Check last 5 commands
-          let foundPwd = false;
-          
-          // Check if there's a recent pwd command
-          for (let i = recentCommands.length - 1; i >= 0; i--) {
-            const cmd = recentCommands[i];
-            if (cmd.command === 'pwd' && cmd.output) {
-              const newPath = cmd.output.trim();
-              setCurrentWorkingDir(newPath);
-              foundPwd = true;
-              break;
-            }
-          }
-          
-          // If no recent pwd, check if we have a cd command and run pwd
-          if (!foundPwd) {
-            const hasRecentCd = recentCommands.some(cmd => 
-              cmd.command.startsWith('cd ') || cmd.command === 'cd'
-            );
-            
-            if (hasRecentCd) {
-              // Execute pwd to get current directory
-              const result = await invoke<{ output: string }>('execute_command', {
-                sessionId: activeSession,
-                command: 'pwd',
-              });
-              if (result?.output) {
-                const newPath = result.output.trim();
-                setCurrentWorkingDir(newPath);
-              }
-            }
-          }
-        } else if (activeSession) {
-          // Initial directory check when session starts
-          const result = await invoke<{ output: string }>('execute_command', {
-            sessionId: activeSession,
-            command: 'pwd',
-          });
-          if (result?.output) {
-            const newPath = result.output.trim();
-            setCurrentWorkingDir(newPath);
-          }
-        }
-      } catch (error) {
-        console.log('Could not get current directory, using fallback');
-      }
-    };
-
-    if (activeSession) {
-      updateWorkingDirectory();
-    }
-  }, [activeSession, commandHistory]); // Update when commands change
-
-  // Enhanced natural language detection and processing
-  const detectNaturalLanguage = (input: string): boolean => {
-    const naturalLanguageIndicators = [
-      'show me', 'find all', 'list all', 'how do i', 'what is', 'where are',
-      'can you', 'please', 'i want to', 'i need to', 'help me',
-      'search for', 'look for', 'give me', 'tell me', 'count the',
-      'delete all', 'remove all', 'copy all', 'move all', 'create a',
-      'make a', 'install the', 'update the', 'check the', 'run the'
-    ];
-
-    const inputLower = input.toLowerCase();
-    const isNL = naturalLanguageIndicators.some(indicator => inputLower.includes(indicator)) ||
-      (input.includes(' ') && !input.startsWith('/') && !input.startsWith('~') &&
-        Boolean(inputLower.match(/^[a-z\s]+$/))); // Contains only letters and spaces
-
-    return isNL;
-  };
-
-  const handleNaturalLanguageDetection = async (input: string) => {
-    if (detectNaturalLanguage(input) && isModelLoaded && activeSession) {
-      try {
-        const context = commandHistory.slice(-3).map(cmd => cmd.command).join('; ');
-        const response = await translateNaturalLanguage(input, context);
-
-        if (response.text && !response.text.startsWith('#')) {
-          // Clean up the response text (remove emoji prefixes if any)
-          let cleanCommand = response.text.replace(/^🤖\s*/, '').trim();
-
-          // Store the original natural language input for later use
-          setOriginalNaturalLanguage(input);
-
-          // Add natural language suggestion
-          const nlSuggestion = {
-            id: Date.now().toString(),
-            type: 'command' as const,
-            content: cleanCommand,
-            confidence: response.confidence,
-            timestamp: Date.now(),
-          };
-
-          addSuggestion(nlSuggestion);
-
-          // Auto-suggest this as a completion
-          setCompletions([cleanCommand]);
-          setShowSuggestions(true);
-          setSelectedCompletion(0);
-        }
-      } catch (error) {
-        console.error('Natural language detection failed:', error);
-      }
-    }
-  };
-
-  // Get smart completions as user types (with natural language detection)
-  useEffect(() => {
-    const getSmartCompletions = async () => {
-      if (input.trim() && activeSession && isModelLoaded && historyIndex === -1) {
-        // First try natural language detection
-        if (detectNaturalLanguage(input)) {
-          await handleNaturalLanguageDetection(input);
-        } else {
-          // Regular command completions
-          const completions = await getCompletions(input, activeSession);
-          setCompletions(completions);
-          setShowSuggestions(completions.length > 0);
-          setSelectedCompletion(0);
-        }
-      } else {
-        setShowSuggestions(false);
-      }
-    };
-
-    const debounceTimer = setTimeout(getSmartCompletions, 500); // Slightly longer delay for natural language
-    return () => clearTimeout(debounceTimer);
-  }, [input, activeSession, isModelLoaded, getCompletions, historyIndex]);
-
-  // Tab completion for file paths
-  const handleTabCompletion = async () => {
-    if (showSuggestions && completions.length > 0) {
-      const selectedCommand = completions[selectedCompletion];
-
-      // If we have an original natural language command, store it in history first
-      if (originalNaturalLanguage && activeSession) {
-        try {
-          await invoke('store_command_in_history', {
-            sessionId: activeSession,
-            command: originalNaturalLanguage,
-          });
-        } catch (error) {
-          console.error('Failed to store natural language command in history:', error);
-        }
-      }
-
-      setInput(selectedCommand);
-      setShowSuggestions(false);
-      setOriginalNaturalLanguage(null); // Clear the stored original command
+    if (!active || !terminal) {
+      webglAddonRef.current?.dispose();
+      webglAddonRef.current = null;
       return;
     }
 
-    if (!activeSession) return;
-
-    try {
-      // Extract the last word (potential path) from input
-      const parts = input.split(' ');
-      const lastPart = parts[parts.length - 1];
-
-      const pathCompletions = await invoke<string[]>('get_path_completions', {
-        sessionId: activeSession,
-        partialPath: lastPart,
+    // Hidden tabs keep their PTY and canvas scrollback alive without holding
+    // scarce GPU contexts. The active tab is promoted to WebGL on demand and
+    // safely falls back to xterm's canvas renderer.
+    void import('@xterm/addon-webgl')
+      .then(({ WebglAddon }) => {
+        if (cancelled || terminalRef.current !== terminal) return;
+        try {
+          const addon = new WebglAddon();
+          addon.onContextLoss(() => {
+            addon.dispose();
+            if (webglAddonRef.current === addon) webglAddonRef.current = null;
+          });
+          terminal.loadAddon(addon);
+          webglAddonRef.current = addon;
+        } catch {
+          // WebKit and virtualized test environments may not expose WebGL.
+        }
+      })
+      .catch(() => {
+        // Canvas rendering remains the supported fallback.
       });
 
-      if (pathCompletions.length === 1) {
-        // Single completion - auto-complete
-        parts[parts.length - 1] = pathCompletions[0];
-        setInput(parts.join(' '));
-      } else if (pathCompletions.length > 1) {
-        // Multiple completions - show them
-        setCompletions(pathCompletions.map((completion: string) => {
-          const newParts = [...parts];
-          newParts[newParts.length - 1] = completion;
-          return newParts.join(' ');
-        }));
-        setShowSuggestions(true);
-        setSelectedCompletion(0);
-      }
-    } catch (error) {
-      console.error('Tab completion failed:', error);
-    }
-  };
+    return () => {
+      cancelled = true;
+      webglAddonRef.current?.dispose();
+      webglAddonRef.current = null;
+    };
+  }, [active, terminalGeneration]);
 
-  // Arrow key navigation through command history
-  const navigateHistory = (direction: 'up' | 'down') => {
-    if (historyCommands.length === 0) {
-      console.log('📚 No command history available for navigation');
-      return;
-    }
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
 
-    if (direction === 'up') {
-      if (historyIndex === -1) {
-        // First time pressing up - save current input and go to latest command
-        setOriginalInput(input);
-        setHistoryIndex(0);
-        setInput(historyCommands[0]);
-      } else if (historyIndex < historyCommands.length - 1) {
-        // Go to older command
-        const newIndex = historyIndex + 1;
-        setHistoryIndex(newIndex);
-        setInput(historyCommands[newIndex]);
-      }
-    } else {
-      // Down
-      if (historyIndex > 0) {
-        // Go to newer command
-        const newIndex = historyIndex - 1;
-        setHistoryIndex(newIndex);
-        setInput(historyCommands[newIndex]);
-      } else if (historyIndex === 0) {
-        // Back to original input
-        setHistoryIndex(-1);
-        setInput(originalInput);
-      }
-    }
-  };
+    let disposed = false;
+    let snapshotReady = false;
+    let lastSequence = 0;
+    let unlistenOutput: UnlistenFn | undefined;
+    let unlistenExit: UnlistenFn | undefined;
+    let streamSubscriberId: number | undefined;
+    const queuedOutput: TerminalOutputChunk[] = [];
+    let queuedOutputBytes = 0;
+    let outputQueueOverflowed = false;
+    const inputQueue: InputMessage[] = [];
+    let pendingInputBytes = 0;
+    let inputOverflowReported = false;
+    let sendingInput = false;
+    let flushScheduled = false;
+    let commandStartedAt: number | null = null;
+    let recordShellEvents = false;
 
-  // Handle keyboard events directly on the input
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    const inputElement = e.currentTarget;
-    const cursorPos = inputElement.selectionStart || 0;
-    const inputValue = inputElement.value;
+    const terminal = new XTermTerminal({
+      allowTransparency: false,
+      cursorBlink: activeRef.current,
+      cursorStyle: 'block',
+      drawBoldTextInBrightColors: true,
+      fastScrollSensitivity: 5,
+      fontFamily,
+      fontSize,
+      letterSpacing: 0,
+      lineHeight: 1.12,
+      macOptionClickForcesSelection: true,
+      minimumContrastRatio: 4.5,
+      rightClickSelectsWord: true,
+      screenReaderMode: true,
+      scrollback: 20_000,
+      scrollOnUserInput: true,
+      tabStopWidth: 8,
+      theme: TERMINAL_THEME,
+    });
+    const fitAddon = new FitAddon();
+    const searchAddon = new SearchAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.loadAddon(searchAddon);
+    terminal.loadAddon(new WebLinksAddon());
+    terminal.open(container);
+    terminalRef.current = terminal;
+    fitAddonRef.current = fitAddon;
+    setTerminalGeneration(generation => generation + 1);
 
-    // Handle modifier key combinations first
-    if (e.ctrlKey || e.metaKey) {
-      switch (e.key) {
-        case 'u': // Ctrl+U: Delete to start of line (ASCII 0x15)
-          e.preventDefault();
-          const afterCursor = inputValue.substring(cursorPos);
-          setInput(afterCursor);
-          setTimeout(() => inputElement.setSelectionRange(0, 0), 0);
-          setHistoryIndex(-1);
-          setOriginalInput('');
-          return;
-
-        case 'k': // Ctrl+K: Delete to end of line (ASCII 0x0B)
-          e.preventDefault();
-          const beforeCursor = inputValue.substring(0, cursorPos);
-          setInput(beforeCursor);
-          setTimeout(() => inputElement.setSelectionRange(cursorPos, cursorPos), 0);
-          return;
-
-        case 'w': // Ctrl+W: Delete previous word (ASCII 0x17)
-          e.preventDefault();
-          const beforeCursorW = inputValue.substring(0, cursorPos);
-          const afterCursorW = inputValue.substring(cursorPos);
-
-          // Find the start of the current word by looking backwards
-          const wordMatch = beforeCursorW.match(/\S*\s*$/);
-          if (wordMatch) {
-            const newBeforeCursor = beforeCursorW.substring(0, beforeCursorW.length - wordMatch[0].length);
-            const newValue = newBeforeCursor + afterCursorW;
-            setInput(newValue);
-            setTimeout(() => inputElement.setSelectionRange(newBeforeCursor.length, newBeforeCursor.length), 0);
-          }
-          return;
-
-        case 'l': // Ctrl+L: Clear screen (Form Feed - ASCII 0x0C)
-          e.preventDefault();
-          clearHistory();
-          return;
-
-        case 'd': // Ctrl+D: Exit shell (EOT - ASCII 0x04)
-          e.preventDefault();
-          if (inputValue.trim() === '') {
-            if (activeSession) {
-              executeCommand('exit');
-            }
-          }
-          return;
-
-        case 'c': // Ctrl+C: Cancel current input (ETX - ASCII 0x03)
-          e.preventDefault();
-          setInput('');
-          setHistoryIndex(-1);
-          setOriginalInput('');
-          setShowSuggestions(false);
-          return;
-
-        case 'h': // Ctrl+H: Backspace (BS - ASCII 0x08)
-          e.preventDefault();
-          if (cursorPos > 0) {
-            const newValue = inputValue.substring(0, cursorPos - 1) + inputValue.substring(cursorPos);
-            setInput(newValue);
-            setTimeout(() => inputElement.setSelectionRange(cursorPos - 1, cursorPos - 1), 0);
-          }
-          return;
-
-        case 'r': // Ctrl+R: Reverse history search
-          e.preventDefault();
-          setShowHistoryModal(true);
-          return;
-      }
-    }
-
-    // Handle Option/Alt key combinations for word movement
-    if (e.altKey) {
-      switch (e.key) {
-        case 'ArrowLeft': // Alt+Left: Move cursor back by word
-          e.preventDefault();
-          const beforeCursorLeft = inputValue.substring(0, cursorPos);
-          // Find the start of the previous word
-          const leftMatch = beforeCursorLeft.match(/\S+\s*$/);
-          if (leftMatch) {
-            const targetPos = beforeCursorLeft.length - leftMatch[0].length;
-            setTimeout(() => inputElement.setSelectionRange(targetPos, targetPos), 0);
-          } else {
-            setTimeout(() => inputElement.setSelectionRange(0, 0), 0);
-          }
-          return;
-
-        case 'ArrowRight': // Alt+Right: Move cursor forward by word
-          e.preventDefault();
-          const afterCursorRight = inputValue.substring(cursorPos);
-          // Find the end of the next word
-          const rightMatch = afterCursorRight.match(/^\s*\S+/);
-          if (rightMatch) {
-            const targetPos = cursorPos + rightMatch[0].length;
-            setTimeout(() => inputElement.setSelectionRange(targetPos, targetPos), 0);
-          } else {
-            setTimeout(() => inputElement.setSelectionRange(inputValue.length, inputValue.length), 0);
-          }
-          return;
-
-        case 'Backspace': // Alt+Backspace: Delete previous word
-          e.preventDefault();
-          const beforeCursorAltBS = inputValue.substring(0, cursorPos);
-          const afterCursorAltBS = inputValue.substring(cursorPos);
-
-          const wordMatchAlt = beforeCursorAltBS.match(/\S+\s*$/);
-          if (wordMatchAlt) {
-            const newBeforeCursor = beforeCursorAltBS.substring(0, beforeCursorAltBS.length - wordMatchAlt[0].length);
-            const newValue = newBeforeCursor + afterCursorAltBS;
-            setInput(newValue);
-            setTimeout(() => inputElement.setSelectionRange(newBeforeCursor.length, newBeforeCursor.length), 0);
-          }
-          return;
-      }
-    }
-
-    // Handle regular keys
-    switch (e.key) {
-      case 'Enter': // ASCII 0x0A (LF) or 0x0D (CR)
-        e.preventDefault();
-        handleExecuteCommand();
-        break;
-
-      case 'Tab':
-        e.preventDefault();
-        handleTabCompletion();
-        break;
-
-      case 'ArrowUp':
-        e.preventDefault();
-        if (showSuggestions) {
-          setSelectedCompletion((prev) =>
-            prev > 0 ? prev - 1 : completions.length - 1
-          );
-        } else {
-          navigateHistory('up');
-        }
-        break;
-
-      case 'ArrowDown':
-        e.preventDefault();
-        if (showSuggestions) {
-          setSelectedCompletion((prev) =>
-            prev < completions.length - 1 ? prev + 1 : 0
-          );
-        } else {
-          navigateHistory('down');
-        }
-        break;
-
-      case 'ArrowLeft':
-      case 'ArrowRight':
-        // Allow normal cursor movement (don't prevent default)
-        break;
-
-      case 'Escape':
-        e.preventDefault();
-        setShowSuggestions(false);
-        setOriginalNaturalLanguage(null); // Clear stored natural language command
-        setShowHistoryModal(false);
-        setCommandExplanation(null);
-        if (historyIndex !== -1) {
-          setHistoryIndex(-1);
-          setInput(originalInput);
-        }
-        break;
-    }
-  };
-
-  // Global keyboard shortcuts (not input-specific)
-  useHotkeys('escape', () => {
-    if (showHistoryModal) {
-      setShowHistoryModal(false);
-    }
-  }, { enableOnFormTags: false });
-
-  // Handle command explanation on hover
-  const handleCommandHover = async (command: string) => {
-    if (hoveredCommand === command || !isModelLoaded) return;
-
-    setHoveredCommand(command);
-    try {
-      const explanation = await explainCommand(command);
-      setCommandExplanation(explanation.text);
-    } catch (error) {
-      console.error('Failed to get explanation:', error);
-    }
-  };
-
-  const handleCommandLeave = () => {
-    setHoveredCommand(null);
-    setCommandExplanation(null);
-  };
-
-  const handleExecuteCommand = async () => {
-    if (!input.trim() || isExecuting) return;
-
-    // Handle clear command specially - clear the display instead of executing it
-    if (input.trim().toLowerCase() === 'clear') {
-      clearHistory();
-      setInput('');
-      setShowSuggestions(false);
-      setHistoryIndex(-1);
-      setOriginalInput('');
-      return;
-    }
-
-    await executeCommand(input);
-
-    setInput('');
-    setShowSuggestions(false);
-    setHistoryIndex(-1);
-    setOriginalInput('');
-
-    // Reload command history for navigation after executing a command
-    if (activeSession) {
+    const flushInput = async () => {
+      flushScheduled = false;
+      if (sendingInput || disposed) return;
+      sendingInput = true;
       try {
-        const history = await invoke<string[]>('get_command_history_for_navigation', {
-          sessionId: activeSession,
-        });
-        console.log('🔄 Reloaded command history after execution:', {
-          command: input,
-          newHistoryCount: history.length,
-          latestCommands: history.slice(0, 3)
-        });
-        setHistoryCommands(history);
+        while (inputQueue.length > 0 && !disposed) {
+          const message = inputQueue.shift();
+          if (!message) break;
+          pendingInputBytes = Math.max(0, pendingInputBytes - message.byteLength);
+          if (pendingInputBytes < MAX_PENDING_INPUT_BYTES / 2) inputOverflowReported = false;
+          if (message.kind === 'text') {
+            await invoke('write_to_terminal', {
+              sessionId,
+              data: message.text ?? '',
+            });
+          } else {
+            await invoke('write_bytes_to_terminal', {
+              sessionId,
+              data: message.bytes ?? [],
+            });
+          }
+        }
       } catch (error) {
-        console.error('Failed to reload command history after execution:', error);
+        onStatusChange(sessionId, 'error');
+        terminal.writeln(`\r\n\x1b[31m[pH7Console input error: ${String(error)}]\x1b[0m`);
+      } finally {
+        sendingInput = false;
+        if (inputQueue.length > 0 && !disposed) scheduleInputFlush();
       }
+    };
+
+    const scheduleInputFlush = () => {
+      if (flushScheduled || sendingInput || disposed) return;
+      flushScheduled = true;
+      window.queueMicrotask(flushInput);
+    };
+
+    const enqueueText = (data: string) => {
+      if (data.length > MAX_TEXT_INPUT_CHARS) {
+        let offset = 0;
+        while (offset < data.length) {
+          let end = Math.min(offset + MAX_TEXT_INPUT_CHARS, data.length);
+          const finalCodeUnit = data.charCodeAt(end - 1);
+          if (end < data.length && finalCodeUnit >= 0xd800 && finalCodeUnit <= 0xdbff) {
+            end -= 1;
+          }
+          enqueueText(data.slice(offset, end));
+          offset = end;
+        }
+        return;
+      }
+      const byteLength = new TextEncoder().encode(data).byteLength;
+      if (pendingInputBytes + byteLength > MAX_PENDING_INPUT_BYTES) {
+        if (!inputOverflowReported) {
+          inputOverflowReported = true;
+          terminal.writeln('\r\n\x1b[33m[pH7Console: input queue is full; paste less data at once]\x1b[0m');
+        }
+        return;
+      }
+      pendingInputBytes += byteLength;
+      const last = inputQueue[inputQueue.length - 1];
+      if (last?.kind === 'text' && (last.text?.length ?? 0) < 64 * 1024) {
+        last.text = `${last.text ?? ''}${data}`;
+        last.byteLength += byteLength;
+      } else {
+        inputQueue.push({ kind: 'text', text: data, byteLength });
+      }
+      scheduleInputFlush();
+    };
+
+    terminal.onData(enqueueText);
+    terminal.onBinary(data => {
+      if (pendingInputBytes + data.length > MAX_PENDING_INPUT_BYTES) {
+        if (!inputOverflowReported) {
+          inputOverflowReported = true;
+          terminal.writeln('\r\n\x1b[33m[pH7Console: input queue is full]\x1b[0m');
+        }
+        return;
+      }
+      pendingInputBytes += data.length;
+      inputQueue.push({
+        kind: 'binary',
+        bytes: Array.from(data, character => character.charCodeAt(0) & 0xff),
+        byteLength: data.length,
+      });
+      scheduleInputFlush();
+    });
+
+    terminal.parser.registerOscHandler(7, data => {
+      const workingDirectory = pathFromOsc7(data);
+      if (workingDirectory) onWorkingDirectory(sessionId, workingDirectory);
+      return true;
+    });
+
+    terminal.parser.registerOscHandler(133, data => {
+      if (recordShellEvents && data === 'C') commandStartedAt = performance.now();
+      return true;
+    });
+
+    terminal.parser.registerOscHandler(1337, data => {
+      if (!recordShellEvents || disposed) return true;
+      const event = parseShellCommandEvent(data);
+      if (!event) return true;
+      const durationMs = commandStartedAt === null
+        ? 0
+        : Math.max(0, Math.round(performance.now() - commandStartedAt));
+      commandStartedAt = null;
+      void invoke<CommandExecution>('record_shell_command', {
+        sessionId,
+        command: event.command,
+        exitCode: event.exitCode,
+        durationMs,
+      }).then(execution => {
+        if (!disposed) onCommandCompleted(execution);
+      }).catch(error => {
+        console.error('Could not record local command metadata:', error);
+      });
+      return true;
+    });
+
+    terminal.attachCustomKeyEventHandler(event => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+        window.dispatchEvent(new CustomEvent('ph7-terminal-search'));
+        return false;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        terminal.clear();
+        return false;
+      }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c' && terminal.hasSelection()) {
+        void navigator.clipboard.writeText(terminal.getSelection());
+        return false;
+      }
+      return true;
+    });
+
+    const controller: TerminalController = {
+      clear: () => terminal.clear(),
+      copySelection: async () => {
+        if (terminal.hasSelection()) {
+          await navigator.clipboard.writeText(terminal.getSelection());
+        }
+      },
+      findNext: query => searchAddon.findNext(query, { incremental: true }),
+      findPrevious: query => searchAddon.findPrevious(query),
+      fitAndFocus: () => {
+        fitAddon.fit();
+        terminal.focus();
+      },
+    };
+    onController(sessionId, controller);
+
+    let resizeFrame: number | null = null;
+    const resizeObserver = new ResizeObserver(() => {
+      if (disposed || !activeRef.current || resizeFrame !== null) return;
+      resizeFrame = window.requestAnimationFrame(() => {
+        resizeFrame = null;
+        if (!disposed && activeRef.current) fitAddon.fit();
+      });
+    });
+    resizeObserver.observe(container);
+
+    const resizeDisposable = terminal.onResize(({ cols, rows }) => {
+      void invoke('resize_terminal', { sessionId, cols, rows });
+    });
+
+    const focusListener = () => {
+      if (activeRef.current) controller.fitAndFocus();
+    };
+    window.addEventListener('ph7-focus-terminal', focusListener);
+
+    const writeChunk = (output: TerminalOutputChunk) => {
+      if (output.sequence <= lastSequence) return;
+      terminal.write(output.data);
+      lastSequence = output.sequence;
+    };
+
+    const queueOutput = (output: TerminalOutputChunk) => {
+      queuedOutput.push(output);
+      queuedOutputBytes += output.data.byteLength;
+      while (queuedOutputBytes > MAX_PENDING_OUTPUT_BYTES && queuedOutput.length > 0) {
+        const discarded = queuedOutput.shift();
+        queuedOutputBytes = Math.max(0, queuedOutputBytes - (discarded?.data.byteLength ?? 0));
+        outputQueueOverflowed = true;
+      }
+    };
+
+    const initializeStream = async () => {
+      try {
+        const channel = new Channel<ArrayBuffer | Uint8Array>();
+        channel.onmessage = payload => {
+          if (disposed) return;
+          const output = decodeStreamFrame(payload);
+          if (!output) return;
+          if (!snapshotReady) queueOutput(output);
+          else writeChunk(output);
+        };
+        const subscriberId = await invoke<number>('attach_terminal_stream', {
+          sessionId,
+          onEvent: channel,
+        });
+        if (disposed) {
+          void invoke('detach_terminal_stream', { sessionId, subscriberId });
+          return;
+        }
+        streamSubscriberId = subscriberId;
+      } catch {
+        // Older native builds can still use the event transport. The channel
+        // path is preferred because large binary chunks bypass JSON/base64.
+        const stopOutput = await listen<TerminalOutputEvent>('terminal-output', event => {
+          const output = event.payload;
+          if (output.sessionId !== sessionId || disposed) return;
+          const chunk = {
+            sequence: output.sequence,
+            data: decodeBase64(output.dataBase64),
+          };
+          if (!snapshotReady) queueOutput(chunk);
+          else writeChunk(chunk);
+        });
+        if (disposed) {
+          stopOutput();
+          return;
+        }
+        unlistenOutput = stopOutput;
+      }
+
+      const stopExit = await listen<TerminalExitEvent>('terminal-exit', event => {
+        const exit = event.payload;
+        if (exit.sessionId !== sessionId || disposed) return;
+        onStatusChange(sessionId, 'exited');
+        const reason = exit.signal ? ` (${exit.signal})` : '';
+        terminal.writeln(
+          `\r\n\x1b[2m[pH7Console: shell exited with code ${exit.exitCode}${reason}]\x1b[0m`,
+        );
+      });
+      if (disposed) {
+        stopExit();
+        return;
+      }
+      unlistenExit = stopExit;
+      try {
+        let snapshot = await invoke<TerminalSnapshot>('get_terminal_snapshot', { sessionId });
+        // If a command flooded more data than the attach queue can safely
+        // retain, take a fresh bounded native snapshot before rendering.
+        for (let attempt = 0; outputQueueOverflowed && attempt < 2; attempt += 1) {
+          queuedOutput.length = 0;
+          queuedOutputBytes = 0;
+          outputQueueOverflowed = false;
+          snapshot = await invoke<TerminalSnapshot>('get_terminal_snapshot', { sessionId });
+        }
+        if (disposed) return;
+        terminal.write(decodeBase64(snapshot.dataBase64));
+        lastSequence = snapshot.lastSequence;
+        snapshotReady = true;
+        // Snapshot replay may contain old OSC metadata. Start recording only
+        // after replay so reconnecting never duplicates command history.
+        recordShellEvents = true;
+        queuedOutput
+          .sort((left, right) => left.sequence - right.sequence)
+          .forEach(writeChunk);
+        queuedOutput.length = 0;
+        queuedOutputBytes = 0;
+        onStatusChange(sessionId, snapshot.isRunning ? 'running' : 'exited');
+        if (activeRef.current) {
+          fitAddon.fit();
+          terminal.focus();
+        }
+      } catch (error) {
+        snapshotReady = true;
+        onStatusChange(sessionId, 'error');
+        terminal.writeln(`\x1b[31mUnable to attach to terminal: ${String(error)}\x1b[0m`);
+      }
+    };
+
+    onStatusChange(sessionId, 'connecting');
+    void initializeStream();
+
+    return () => {
+      disposed = true;
+      unlistenOutput?.();
+      unlistenExit?.();
+      if (streamSubscriberId !== undefined) {
+        void invoke('detach_terminal_stream', { sessionId, subscriberId: streamSubscriberId });
+      }
+      resizeObserver.disconnect();
+      if (resizeFrame !== null) window.cancelAnimationFrame(resizeFrame);
+      resizeDisposable.dispose();
+      window.removeEventListener('ph7-focus-terminal', focusListener);
+      onController(sessionId, null);
+      webglAddonRef.current?.dispose();
+      webglAddonRef.current = null;
+      terminal.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
+    };
+  }, [fontFamily, fontSize, onCommandCompleted, onController, onStatusChange, onWorkingDirectory, sessionId]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={`absolute inset-0 px-3 py-2 ${active ? 'visible' : 'invisible pointer-events-none'}`}
+      aria-hidden={!active}
+      data-session-id={sessionId}
+    />
+  );
+};
+
+export const Terminal: React.FC = () => {
+  const {
+    activeSession,
+    clearHistory,
+    commandHistory,
+    recordCommandExecution,
+    restartSession,
+    selectWorkspace,
+    sessions,
+    updateSessionWorkingDirectory,
+  } = useTerminalStore();
+  const { appearance } = useSettingsStore();
+  const controllers = useRef(new Map<string, TerminalController>());
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const [searchVisible, setSearchVisible] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [historyVisible, setHistoryVisible] = useState(false);
+  const [sessionStatuses, setSessionStatuses] = useState<Record<string, SessionStatus>>({});
+  const [contextRefreshToken, setContextRefreshToken] = useState(0);
+  const [restartingSession, setRestartingSession] = useState<string | null>(null);
+
+  const activeSessionData = sessions.find(session => session.id === activeSession);
+  const activeController = activeSession ? controllers.current.get(activeSession) : undefined;
+  const activeStatus = activeSession ? sessionStatuses[activeSession] ?? 'connecting' : 'exited';
+
+  const handleController = useCallback((sessionId: string, controller: TerminalController | null) => {
+    if (controller) controllers.current.set(sessionId, controller);
+    else controllers.current.delete(sessionId);
+  }, []);
+
+  const handleCommandCompleted = useCallback(
+    (execution: CommandExecution) => {
+      recordCommandExecution(execution);
+      setContextRefreshToken(current => current + 1);
+    },
+    [recordCommandExecution],
+  );
+
+  const handleStatusChange = useCallback((sessionId: string, status: SessionStatus) => {
+    setSessionStatuses(current => ({ ...current, [sessionId]: status }));
+  }, []);
+
+  const handleWorkingDirectory = useCallback(
+    (sessionId: string, workingDirectory: string) => {
+      void invoke<string>('sync_terminal_working_directory', {
+        sessionId,
+        workingDirectory,
+      }).then(path => updateSessionWorkingDirectory(sessionId, path));
+    },
+    [updateSessionWorkingDirectory],
+  );
+
+  const handleRestart = useCallback(async (sessionId: string) => {
+    if (restartingSession) return;
+    setRestartingSession(sessionId);
+    try {
+      await restartSession(sessionId);
+    } finally {
+      setRestartingSession(null);
     }
+  }, [restartSession, restartingSession]);
 
-    // Get AI suggestions for next command
-    if (isModelLoaded && activeSession) {
-      await getSuggestions(`Last command: ${input}`);
+  const showSearch = useCallback(() => {
+    setSearchVisible(true);
+    window.requestAnimationFrame(() => searchInputRef.current?.focus());
+  }, []);
+
+  const hideSearch = useCallback(() => {
+    setSearchVisible(false);
+    setSearchQuery('');
+    activeController?.fitAndFocus();
+  }, [activeController]);
+
+  const insertHistoryCommand = useCallback((command: string) => {
+    if (!activeSession) return;
+    if (!command.trim() || hasUnsafeTerminalCharacters(command)) {
+      console.error('Refused to insert unsafe command-history text');
+      return;
     }
-  };
+    void invoke('write_to_terminal', {
+      sessionId: activeSession,
+      data: command,
+    }).then(() => {
+      window.dispatchEvent(new CustomEvent('ph7-focus-terminal'));
+    }).catch(error => {
+      console.error('Could not insert command from local history:', error);
+    });
+  }, [activeSession]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newValue = e.target.value;
-    setInput(newValue);
+  useEffect(() => {
+    const listener = () => showSearch();
+    window.addEventListener('ph7-terminal-search', listener);
+    return () => window.removeEventListener('ph7-terminal-search', listener);
+  }, [showSearch]);
 
-    // Reset history navigation when user types
-    if (historyIndex !== -1) {
-      setHistoryIndex(-1);
-      setOriginalInput('');
-    }
+  useEffect(() => {
+    activeController?.fitAndFocus();
+  }, [activeController, activeSession]);
 
-    // Clear natural language state if user manually edits the input
-    if (originalNaturalLanguage) {
-      setOriginalNaturalLanguage(null);
-    }
-  };
-
-  const getCurrentPath = () => {
-    // Extract current path from last command or default to ~
-    const lastCommand = commandHistory[commandHistory.length - 1];
-    if (lastCommand?.command === 'pwd') {
-      return lastCommand.output || '~';
-    }
-    return '~';
-  };
-
-  const formatTimestamp = (timestamp: string) => {
-    return new Date(timestamp).toLocaleTimeString();
-  };
-
-  if (!activeSession) {
+  if (!activeSession || !activeSessionData) {
     return (
-      <div className="h-full flex items-center justify-center text-terminal-muted">
+      <div className="h-full flex items-center justify-center text-terminal-muted" data-testid="terminal">
         <div className="text-center">
-          <TerminalIcon className="w-12 h-12 mx-auto mb-4 opacity-50" />
-          <p>No active terminal session</p>
+          <p className="text-sm">No active terminal session</p>
+          <p className="mt-1 text-xs">Create a tab from the sidebar to start a shell.</p>
         </div>
       </div>
     );
   }
 
+  const statusLabel = {
+    connecting: 'Connecting',
+    running: 'Live PTY',
+    exited: 'Shell exited',
+    error: 'Needs attention',
+  }[activeStatus];
+
   return (
-    <div className="h-full flex flex-col bg-terminal-bg min-h-0 terminal">
-      {/* Warp-style Terminal Header */}
-      <TerminalHeader 
-        currentPath={currentWorkingDir} 
-        activeSessionId={activeSession || undefined}
-        onPathChange={async (newPath) => {
-          console.log(`🔄 Terminal: Changing working directory to: ${newPath}`);
-          // Update the working directory when the path changes from the header
-          setCurrentWorkingDir(newPath);
-          
-          // Also change the terminal's working directory if we have an active session
-          if (activeSession) {
-            try {
-              await invoke('change_directory', {
-                sessionId: activeSession,
-                newPath: newPath
-              });
-              console.log(`✅ Terminal: Successfully changed terminal directory to: ${newPath}`);
-            } catch (error) {
-              console.error(`❌ Terminal: Failed to change terminal directory:`, error);
-            }
-          }
-        }}
+    <section
+      className="h-full min-h-0 flex flex-col bg-terminal-bg"
+      data-testid="terminal"
+      aria-label="Terminal"
+    >
+      <TerminalHeader
+        activeSessionId={activeSession}
+        currentPath={activeSessionData.working_directory}
+        onPathChange={path => updateSessionWorkingDirectory(activeSession, path)}
+        refreshToken={contextRefreshToken}
       />
-      
-      {/* Header with History Toggle */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-terminal-border flex-shrink-0">
-        <div className="flex items-center space-x-2">
-          <TerminalIcon className="w-5 h-5 text-ai-primary" />
-          <span className="text-sm font-medium text-terminal-text">
-            Session: {activeSession}
+
+      <div className="h-10 shrink-0 flex items-center justify-between gap-2 border-b border-terminal-border px-3">
+        <div className="min-w-0 flex items-center gap-2 text-xs text-terminal-muted">
+          <span
+            className={`h-2 w-2 rounded-full ${
+              activeStatus === 'running'
+                ? 'bg-emerald-400'
+                : activeStatus === 'connecting'
+                  ? 'bg-amber-400 animate-pulse'
+                  : 'bg-red-400'
+            }`}
+            aria-hidden="true"
+          />
+          <span>{statusLabel}</span>
+          <span className="hidden xl:inline text-terminal-muted/60">
+            Persistent shell • ⌃C interrupt • ⌘F search • ⌘K clear
           </span>
         </div>
-        <button
-          onClick={() => setShowHistoryModal(true)}
-          className="flex items-center space-x-1 px-3 py-1 rounded hover:bg-terminal-border transition-colors"
-        >
-          <History className="w-4 h-4 text-terminal-muted" />
-          <span className="text-xs text-terminal-muted">History</span>
-        </button>
+
+        <div className="flex items-center gap-1">
+          {(activeStatus === 'exited' || activeStatus === 'error') && (
+            <button
+              type="button"
+              onClick={() => void handleRestart(activeSession)}
+              disabled={restartingSession === activeSession}
+              className="terminal-toolbar-button text-emerald-300"
+              aria-label="Restart shell"
+              title="Restart this shell in the same workspace"
+            >
+              <RotateCcw className={`h-3.5 w-3.5 ${restartingSession === activeSession ? 'animate-spin' : ''}`} />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void selectWorkspace()}
+            className="terminal-toolbar-button"
+            aria-label="Choose workspace"
+            title="Choose workspace"
+          >
+            <FolderOpen className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={showSearch}
+            className="terminal-toolbar-button"
+            aria-label="Search terminal output"
+            title="Search output (⌘F)"
+          >
+            <Search className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setHistoryVisible(true)}
+            className="terminal-toolbar-button"
+            aria-label="Open command history"
+            title="Command history"
+          >
+            <History className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => void activeController?.copySelection()}
+            className="terminal-toolbar-button"
+            aria-label="Copy terminal selection"
+            title="Copy selection"
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => activeController?.clear()}
+            className="terminal-toolbar-button"
+            aria-label="Clear terminal scrollback"
+            title="Clear scrollback (⌘K)"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
       </div>
 
-      {/* Command Explanation Tooltip */}
-      {commandExplanation && hoveredCommand && (
-        <div className="mx-4 mt-2 p-3 bg-ai-primary/10 border border-ai-primary/20 rounded flex-shrink-0">
-          <div className="flex items-center space-x-2 mb-1">
-            <Zap className="w-4 h-4 text-ai-primary" />
-            <span className="text-xs font-medium text-ai-primary">Command Explanation</span>
-          </div>
-          <p className="text-sm text-terminal-text">{commandExplanation}</p>
+      {searchVisible && (
+        <div className="h-11 shrink-0 flex items-center gap-1.5 border-b border-terminal-border bg-terminal-surface px-3">
+          <Search className="h-3.5 w-3.5 text-terminal-muted" aria-hidden="true" />
+          <input
+            ref={searchInputRef}
+            value={searchQuery}
+            onChange={event => {
+              const query = event.target.value;
+              setSearchQuery(query);
+              if (query) activeController?.findNext(query);
+            }}
+            onKeyDown={event => {
+              if (event.key === 'Escape') hideSearch();
+              if (event.key === 'Enter' && searchQuery) {
+                if (event.shiftKey) activeController?.findPrevious(searchQuery);
+                else activeController?.findNext(searchQuery);
+              }
+            }}
+            className="min-w-0 flex-1 bg-transparent text-sm text-terminal-text outline-none"
+            placeholder="Search visible output and scrollback"
+            aria-label="Search terminal output"
+          />
+          <button
+            type="button"
+            onClick={() => searchQuery && activeController?.findPrevious(searchQuery)}
+            className="terminal-toolbar-button"
+            aria-label="Previous search result"
+          >
+            <ChevronUp className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => searchQuery && activeController?.findNext(searchQuery)}
+            className="terminal-toolbar-button"
+            aria-label="Next search result"
+          >
+            <ChevronDown className="h-3.5 w-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={hideSearch}
+            className="terminal-toolbar-button"
+            aria-label="Close terminal search"
+          >
+            <X className="h-3.5 w-3.5" />
+          </button>
         </div>
       )}
 
-      {/* Terminal Output */}
-      <div
-        ref={terminalRef}
-        className="flex-1 overflow-y-auto p-4 space-y-2 font-mono text-sm min-h-0"
-      >
-        {commandHistory.map((execution) => (
-          <div key={execution.id} className="space-y-1">
-            {/* Command */}
-            <div className="flex items-center space-x-2">
-              <span className="text-ai-primary font-medium">
-                {getCurrentPath()}
-              </span>
-              <span className={`${execution.exit_code !== undefined && execution.exit_code !== 0
-                  ? 'text-red-400'
-                  : 'text-terminal-muted'
-                }`}>$</span>
-              <span
-                className={`cursor-pointer hover:text-ai-primary transition-colors ${execution.exit_code !== undefined && execution.exit_code !== 0
-                    ? 'text-red-200'
-                    : 'text-terminal-text'
-                  }`}
-                onMouseEnter={() => handleCommandHover(execution.command)}
-                onMouseLeave={handleCommandLeave}
-                title={isModelLoaded ? "Hover for AI explanation" : ""}
-              >
-                {execution.command}
-              </span>
-              <span className="text-terminal-muted text-xs ml-auto">
-                {formatTimestamp(execution.timestamp)}
-              </span>
-            </div>
-
-            {/* Output */}
-            {execution.output && (
-              <div className={`command-output pl-4 border-l-2 ${execution.exit_code !== undefined && execution.exit_code !== 0
-                  ? 'border-red-400/50 bg-red-400/5'
-                  : 'border-terminal-border'
-                }`}>
-                <pre className={`whitespace-pre-wrap ${execution.exit_code !== undefined && execution.exit_code !== 0
-                    ? 'text-red-200'
-                    : ''
-                  }`}>{execution.output}</pre>
-              </div>
-            )}
-
-            {/* Success/Error Indicator - Modern Style */}
-            {execution.exit_code !== undefined && (
-              <div className={`flex items-center space-x-2 text-xs pl-4 mt-1 ${execution.exit_code === 0
-                  ? 'text-green-400'
-                  : 'text-red-400'
-                }`}>
-                {execution.exit_code === 0 ? (
-                  <>
-                    <span className="flex items-center space-x-1">
-                      <span className="w-2 h-2 bg-green-400 rounded-full"></span>
-                      <span>Success</span>
-                    </span>
-                    <span className="text-terminal-muted">
-                      ({execution.duration_ms}ms)
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <span className="flex items-center space-x-1">
-                      <span className="w-2 h-2 bg-red-400 rounded-full"></span>
-                      <span>Failed</span>
-                    </span>
-                    <span className="text-terminal-muted">
-                      (exit {execution.exit_code} • {execution.duration_ms}ms)
-                    </span>
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-        ))}
-
-        {/* Loading indicator */}
-        {isExecuting && (
-          <div className="flex items-center space-x-2 text-terminal-muted">
-            <div className="w-2 h-2 bg-ai-primary rounded-full animate-bounce"></div>
-            <span>Executing...</span>
-          </div>
-        )}
-      </div>
-
-      {/* History Modal */}
-      <HistoryModal
-        isOpen={showHistoryModal}
-        onClose={() => setShowHistoryModal(false)}
-        commandHistory={commandHistory}
-        onSelectCommand={(command) => {
-          setInput(command);
-          inputRef.current?.focus();
-        }}
-      />
-
-      {/* Input Area */}
-      <div className="border-t border-terminal-border p-4 flex-shrink-0 bg-terminal-bg">
-        {/* AI Suggestions */}
-        {showSuggestions && completions.length > 0 && (
-          <div className="mb-3 ai-suggestion">
-            <div className="flex items-center space-x-2 mb-2">
-              <Zap className="w-4 h-4 text-ai-primary" />
-              <span className="text-xs font-medium text-ai-primary">Smart Completions</span>
-            </div>
-            <div className="space-y-1">
-              {completions.map((completion, index) => (
-                <div
-                  key={completion}
-                  className={`px-3 py-1 rounded cursor-pointer text-sm ${index === selectedCompletion
-                      ? 'bg-ai-primary text-white'
-                      : 'text-terminal-text hover:bg-terminal-border'
-                    }`}
-                  onClick={() => {
-                    setInput(completion);
-                    setShowSuggestions(false);
-                  }}
-                >
-                  {completion}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Command Input */}
-        <div className="flex items-center space-x-2">
-          <span className="text-ai-primary font-medium font-mono">
-            {getCurrentPath()}
-          </span>
-          <span className="text-terminal-muted font-mono">$</span>
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={handleInputChange}
-            onKeyDown={handleKeyDown}
-            className="flex-1 terminal-input"
-            placeholder={
-              historyCommands.length > 0
-                ? "Type a command or natural language... (Use ↑↓ for history, try 'show me large files')"
-                : isModelLoaded
-                  ? "Type a command or describe what you want to do in plain English..."
-                  : "Type a command..."
-            }
-            disabled={isExecuting}
+      <div className="relative min-h-0 flex-1 overflow-hidden ph7-xterm-host">
+        {sessions.map(session => (
+          <LiveTerminalSession
+            key={session.id}
+            active={session.id === activeSession}
+            fontFamily={appearance.fontFamily}
+            fontSize={appearance.fontSize}
+            onCommandCompleted={handleCommandCompleted}
+            onController={handleController}
+            onStatusChange={handleStatusChange}
+            onWorkingDirectory={handleWorkingDirectory}
+            sessionId={session.id}
           />
-
-          {isModelLoaded && (
-            <div className="flex items-center space-x-1">
-              <Zap className="w-4 h-4 text-ai-primary" />
-              <span className="text-xs text-ai-primary">AI</span>
-            </div>
-          )}
-        </div>
-
-        {/* Quick Tips */}
-        <div className="mt-2 text-xs text-terminal-muted">
-          <div className="flex items-center space-x-4 flex-wrap">
-            <span>Tab: autocomplete</span>
-            <span>↑↓: history</span>
-            <span>⌃R: search history</span>
-            <span>⌃U: clear line</span>
-            <span>⌃K: clear to end</span>
-            <span>⌃W: delete word</span>
-            <span>⌃L: clear screen</span>
-            <span>⌃C: cancel</span>
-            <span>⌃D: exit</span>
-            <span>⌥←→: word jump</span>
-            <span>⌃H: backspace</span>
-            {isModelLoaded && <span>• AI-powered</span>}
-          </div>
-        </div>
+        ))}
       </div>
-    </div>
+
+      <HistoryModal
+        isOpen={historyVisible}
+        onClose={() => setHistoryVisible(false)}
+        commandHistory={commandHistory}
+        onClearHistory={clearHistory}
+        onSelectCommand={insertHistoryCommand}
+      />
+    </section>
   );
 };

@@ -1,6 +1,6 @@
 import { FullConfig } from '@playwright/test';
 
-async function globalTeardown(config: FullConfig) {
+async function globalTeardown(_config: FullConfig) {
   console.log('🧹 Running global teardown for pH7Console tests');
   
   // Clean up any global state, files, or resources

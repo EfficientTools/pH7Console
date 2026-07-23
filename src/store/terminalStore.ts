@@ -1,13 +1,16 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
+import { open } from '@tauri-apps/plugin-dialog';
 
 export interface CommandExecution {
   id: string;
+  session_id: string;
   command: string;
   output: string;
   exit_code?: number;
   duration_ms: number;
   timestamp: string;
+  working_directory: string;
 }
 
 export interface TerminalSession {
@@ -25,19 +28,23 @@ interface TerminalState {
   currentInput: string;
   isExecuting: boolean;
   isInitialized: boolean;
+  isInitializing: boolean;
 
   // Actions
-  createSession: (title?: string) => Promise<void>;
+  createSession: (title?: string) => Promise<string | null>;
+  restartSession: (sessionId: string) => Promise<string | null>;
   closeSession: (sessionId: string) => Promise<void>;
   updateSessionTitle: (sessionId: string, title: string) => Promise<void>;
   setActiveSession: (sessionId: string) => void;
+  updateSessionWorkingDirectory: (sessionId: string, workingDirectory: string) => void;
+  recordCommandExecution: (execution: CommandExecution) => void;
   executeCommand: (command: string) => Promise<void>;
-  clearHistory: () => void;
+  clearHistory: () => Promise<void>;
   setCurrentInput: (input: string) => void;
   getHistory: () => CommandExecution[];
   initializeDefaultSessions: () => Promise<void>;
-  loadPersistedSessions: () => Promise<void>;
-  persistSessions: () => Promise<void>;
+  loadCommandHistory: () => Promise<void>;
+  selectWorkspace: () => Promise<string | null>;
 }
 
 export const useTerminalStore = create<TerminalState>((set, get) => ({
@@ -47,11 +54,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   currentInput: '',
   isExecuting: false,
   isInitialized: false,
+  isInitializing: false,
 
   createSession: async (title?: string) => {
     try {
-      const sessionId = await invoke<string>('create_terminal', { title });
-      const newSession: TerminalSession = {
+      const sessionId = await invoke<string>('create_terminal', { title, workingDirectory: null });
+      const backendSessions = await invoke<TerminalSession[]>('get_all_sessions');
+      const newSession = backendSessions.find(session => session.id === sessionId) ?? {
         id: sessionId,
         title: title || `Terminal ${sessionId.slice(0, 8)}`,
         working_directory: '~',
@@ -64,10 +73,63 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         activeSession: sessionId,
       }));
 
-      // Persist sessions after creating
-      get().persistSessions();
+      return sessionId;
     } catch (error) {
       console.error('Failed to create terminal session:', error);
+      return null;
+    }
+  },
+
+  restartSession: async (sessionId: string) => {
+    const previous = get().sessions.find(session => session.id === sessionId);
+    if (!previous) return null;
+
+    try {
+      // Native replacement is transactional: the new PTY is validated and
+      // started before the dead one is retired, including at the tab limit.
+      const replacement = await invoke<TerminalSession>('restart_terminal_session', { sessionId });
+      set(state => ({
+        sessions: state.sessions.map(session =>
+          session.id === sessionId ? replacement : session
+        ),
+        activeSession: state.activeSession === sessionId ? replacement.id : state.activeSession,
+      }));
+      return replacement.id;
+    } catch (error) {
+      console.error('Failed to restart terminal session:', error);
+      return null;
+    }
+  },
+
+  selectWorkspace: async () => {
+    const { activeSession } = get();
+    if (!activeSession) return null;
+
+    try {
+      const selectedPath = await open({
+        directory: true,
+        multiple: false,
+        title: 'Choose a terminal workspace',
+      });
+
+      if (typeof selectedPath !== 'string') return null;
+
+      const workingDirectory = await invoke<string>('change_directory', {
+        sessionId: activeSession,
+        newPath: selectedPath,
+      });
+
+      set(state => ({
+        sessions: state.sessions.map(session =>
+          session.id === activeSession
+            ? { ...session, working_directory: workingDirectory }
+            : session
+        ),
+      }));
+      return workingDirectory;
+    } catch (error) {
+      console.error('Failed to select workspace:', error);
+      throw error;
     }
   },
 
@@ -90,8 +152,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         };
       });
 
-      // Persist sessions after closing
-      get().persistSessions();
     } catch (error) {
       console.error('Failed to close terminal session:', error);
     }
@@ -107,8 +167,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
         ),
       }));
 
-      // Persist sessions after updating title
-      get().persistSessions();
     } catch (error) {
       console.error('Failed to update session title:', error);
     }
@@ -116,6 +174,25 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
   setActiveSession: (sessionId: string) => {
     set({ activeSession: sessionId });
+  },
+
+  updateSessionWorkingDirectory: (sessionId: string, workingDirectory: string) => {
+    set(state => ({
+      sessions: state.sessions.map(session =>
+        session.id === sessionId
+          ? { ...session, working_directory: workingDirectory }
+          : session
+      ),
+    }));
+  },
+
+  recordCommandExecution: (execution: CommandExecution) => {
+    set(state => {
+      if (state.commandHistory.some(item => item.id === execution.id)) return state;
+      return {
+        commandHistory: [...state.commandHistory, execution].slice(-1_000),
+      };
+    });
   },
 
   executeCommand: async (command: string) => {
@@ -141,7 +218,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }
   },
 
-  clearHistory: () => {
+  clearHistory: async () => {
+    await invoke('clear_command_history');
     set({ commandHistory: [] });
   },
 
@@ -154,101 +232,52 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   },
 
   initializeDefaultSessions: async () => {
-    const { sessions, isInitialized } = get();
+    const { isInitialized, isInitializing } = get();
 
-    if (isInitialized) {
+    if (isInitialized || isInitializing) {
       console.log('📝 Terminal store already initialized, skipping default session creation');
       return;
     }
 
+    // Claim initialization synchronously before the first await. React's
+    // development StrictMode intentionally replays effects; without this
+    // guard both invocations could create a native PTY and duplicate the tab.
+    set({ isInitializing: true });
+
     console.log('📝 Initializing terminal sessions...');
 
     try {
-      // First try to load persisted sessions
-      await get().loadPersistedSessions();
+      // Older builds persisted session titles and workspace paths in WebView
+      // localStorage. Remove that plaintext legacy state and start a single
+      // fresh PTY. Searchable command history is stored separately by the
+      // encrypted native history service.
+      localStorage.removeItem('pH7Console_sessions');
+      const sessionId = await get().createSession('Main Terminal');
+      if (!sessionId) throw new Error('The native terminal session did not start');
 
-      const { sessions: loadedSessions } = get();
-
-      // If we have no sessions, create 2 default sessions for better UX
-      if (loadedSessions.length === 0) {
-        console.log('📝 No persisted sessions found, creating 2 default sessions for better workflow');
-        await get().createSession('Main Terminal');
-        await get().createSession('Terminal 2');
-      } else {
-        console.log(`📝 Found ${loadedSessions.length} persisted sessions, restoring them`);
-      }
-
-      set({ isInitialized: true });
+      await get().loadCommandHistory();
+      set({ isInitialized: true, isInitializing: false });
     } catch (error) {
       console.error('Failed to initialize sessions:', error);
       // Fallback: create at least one session
-      if (sessions.length === 0) {
+      if (get().sessions.length === 0) {
         await get().createSession('Main Terminal');
       }
-      set({ isInitialized: true });
+      await get().loadCommandHistory();
+      set({ isInitialized: true, isInitializing: false });
     }
   },
 
-  loadPersistedSessions: async () => {
+  loadCommandHistory: async () => {
     try {
-      const sessionsData = localStorage.getItem('pH7Console_sessions');
-      if (sessionsData) {
-        const persistedSessions = JSON.parse(sessionsData) as TerminalSession[];
-        console.log(`📝 Loading ${persistedSessions.length} persisted sessions`);
-
-        // Recreate sessions in backend
-        const validSessions: TerminalSession[] = [];
-        let activeSessionId: string | null = null;
-
-        for (const session of persistedSessions) {
-          try {
-            const sessionId = await invoke<string>('create_terminal', {
-              title: session.title
-            });
-
-            const newSession: TerminalSession = {
-              ...session,
-              id: sessionId, // Use new backend session ID
-              is_active: true,
-            };
-
-            validSessions.push(newSession);
-
-            // Set the first session as active by default
-            if (!activeSessionId) {
-              activeSessionId = sessionId;
-            }
-          } catch (error) {
-            console.error(`Failed to recreate session ${session.title}:`, error);
-          }
-        }
-
-        set({
-          sessions: validSessions,
-          activeSession: activeSessionId,
-        });
-      }
+      const commandHistory = await invoke<CommandExecution[]>('get_recent_command_history', {
+        limit: 500,
+      });
+      set({ commandHistory });
     } catch (error) {
-      console.error('Failed to load persisted sessions:', error);
+      // A history database problem must not prevent a shell from opening.
+      console.error('Failed to load local command history:', error);
     }
   },
 
-  persistSessions: async () => {
-    try {
-      const { sessions } = get();
-      // Only persist session metadata (not the backend session IDs)
-      const sessionMetadata = sessions.map(session => ({
-        id: session.id, // We'll generate new IDs when recreating
-        title: session.title,
-        working_directory: session.working_directory,
-        is_active: session.is_active,
-        created_at: session.created_at,
-      }));
-
-      localStorage.setItem('pH7Console_sessions', JSON.stringify(sessionMetadata));
-      console.log(`📝 Persisted ${sessions.length} sessions to localStorage`);
-    } catch (error) {
-      console.error('Failed to persist sessions:', error);
-    }
-  },
 }));

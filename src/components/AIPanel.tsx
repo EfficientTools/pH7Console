@@ -1,16 +1,48 @@
 import React from 'react';
-import { useAIStore } from '../store/aiStore';
+import { AIResponse, AISuggestion, useAIStore } from '../store/aiStore';
 import { useTerminalStore } from '../store/terminalStore';
-import { Brain, Lightbulb, AlertCircle, Zap, MessageSquare, ThumbsUp, ThumbsDown, Copy, Check } from 'lucide-react';
+import { Brain, Lightbulb, AlertCircle, Zap, MessageSquare, ThumbsUp, ThumbsDown, Copy, Check, CornerDownLeft, Mic, Square, Loader2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen, UnlistenFn } from '@tauri-apps/api/event';
+import { hasUnsafeTerminalCharacters } from '../utils/terminalInput';
+import {
+  initialVoiceInputState,
+  VoiceInputEvent,
+  voiceButtonLabel,
+  voiceInputReducer,
+} from '../voice/voiceInput';
+
+interface CommandPlan {
+  command: string;
+  confidence: number;
+  explanation: string;
+  source: string;
+  riskLevel: 'low' | 'medium' | 'high' | 'critical';
+  riskReasons: string[];
+  requiresConfirmation: boolean;
+  requiresStrongConfirmation: boolean;
+}
+
+type QuickAction = 'explain' | 'fix' | 'optimize' | 'analyze';
+
+const sourceLabel = (source?: string) => {
+  if (source === 'local_llm') return 'On-device model';
+  if (source === 'deterministic') return 'Local fallback';
+  if (source === 'literal') return 'Literal input';
+  if (source === 'unavailable') return 'Unavailable';
+  return 'Local';
+};
 
 export const AIPanel: React.FC = () => {
   const { 
     isModelLoaded, 
+    realLlmStatus,
+    modelError,
     suggestions, 
     isProcessing, 
+    loadModel,
+    refreshLlmStatus,
     clearSuggestions,
-    translateNaturalLanguage,
     addSuggestion,
     updateFeedback
   } = useAIStore();
@@ -20,60 +52,211 @@ export const AIPanel: React.FC = () => {
   const [quickActionLoading, setQuickActionLoading] = React.useState<string | null>(null);
   const [feedbackMessage, setFeedbackMessage] = React.useState<string | null>(null);
   const [copiedSuggestions, setCopiedSuggestions] = React.useState<Set<string>>(new Set());
+  const [isPlanning, setIsPlanning] = React.useState(false);
+  const [voiceState, dispatchVoiceEvent] = React.useReducer(voiceInputReducer, initialVoiceInputState);
+  const aiBusyRef = React.useRef(false);
+  const aiRequestRef = React.useRef(0);
+  const naturalLanguageInputRef = React.useRef('');
+  const voiceDraftPrefixRef = React.useRef('');
+  const voicePhaseRef = React.useRef(voiceState.phase);
+  const startAfterPermissionRef = React.useRef(false);
 
-  const handleNaturalLanguageSubmit = async () => {
-    if (!naturalLanguageInput.trim() || !activeSession) return;
-    
-    const context = commandHistory.slice(-3).map(cmd => cmd.command).join('; ');
-    
+  React.useEffect(() => {
+    naturalLanguageInputRef.current = naturalLanguageInput;
+  }, [naturalLanguageInput]);
+
+  React.useEffect(() => {
+    voicePhaseRef.current = voiceState.phase;
+  }, [voiceState.phase]);
+
+  const beginVoiceCapture = React.useCallback(async () => {
+    const existingDraft = naturalLanguageInputRef.current.trimEnd();
+    voiceDraftPrefixRef.current = existingDraft ? `${existingDraft} ` : '';
+    dispatchVoiceEvent({ kind: 'requesting', message: 'Starting the on-device microphone…' });
     try {
-      const response = await translateNaturalLanguage(naturalLanguageInput, context);
-      
-      // If we get a valid command, add it to suggestions
-      if (response.text && !response.text.startsWith('#')) {
-        addSuggestion({
-          id: Date.now().toString(),
-          type: 'command',
-          content: `💡 Natural Language → Command: ${response.text}`,
-          confidence: response.confidence,
-          timestamp: Date.now()
+      await invoke('start_voice_input', { locale: navigator.language || undefined });
+    } catch (error) {
+      dispatchVoiceEvent({
+        kind: 'error',
+        message: typeof error === 'string' ? error : 'On-device voice input could not start.',
+      });
+    }
+  }, []);
+
+  const receiveVoiceEvent = React.useCallback((event: VoiceInputEvent) => {
+    dispatchVoiceEvent(event);
+    if ((event.kind === 'partial' || event.kind === 'final') && typeof event.transcript === 'string') {
+      setNaturalLanguageInput(`${voiceDraftPrefixRef.current}${event.transcript}`);
+      if (event.kind === 'final') voiceDraftPrefixRef.current = '';
+    }
+    if (event.kind === 'status' && startAfterPermissionRef.current) {
+      startAfterPermissionRef.current = false;
+      if (event.available) void beginVoiceCapture();
+    }
+  }, [beginVoiceCapture]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    let unlisten: UnlistenFn | undefined;
+
+    const connectVoiceInput = async () => {
+      unlisten = await listen<VoiceInputEvent>('voice-input', ({ payload }) => {
+        if (!cancelled) receiveVoiceEvent(payload);
+      });
+      if (cancelled) {
+        unlisten();
+        return;
+      }
+      try {
+        const status = await invoke<VoiceInputEvent>('get_voice_input_status', {
+          locale: navigator.language || undefined,
         });
-        
-        // Add explanation if available
-        if (response.reasoning) {
-          addSuggestion({
-            id: (Date.now() + 1).toString(),
-            type: 'explanation',
-            content: response.reasoning,
-            confidence: response.confidence,
-            timestamp: Date.now()
-          });
-        }
-      } else {
-        // Add the response as a suggestion even if it's not a command
-        addSuggestion({
-          id: Date.now().toString(),
-          type: 'explanation',
-          content: response.text,
-          confidence: response.confidence,
-          timestamp: Date.now()
+        receiveVoiceEvent(status);
+      } catch (error) {
+        receiveVoiceEvent({
+          kind: 'error',
+          message: typeof error === 'string' ? error : 'Could not check on-device voice input.',
         });
       }
+    };
+
+    void connectVoiceInput();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+      if (voicePhaseRef.current === 'listening') void invoke('stop_voice_input');
+    };
+  }, [receiveVoiceEvent]);
+
+  const handleVoiceInput = async () => {
+    if (voiceState.phase === 'listening') {
+      dispatchVoiceEvent({ kind: 'processing', message: 'Finishing the on-device transcript…' });
+      try {
+        await invoke('stop_voice_input');
+      } catch (error) {
+        dispatchVoiceEvent({
+          kind: 'error',
+          message: typeof error === 'string' ? error : 'Voice input could not be stopped cleanly.',
+        });
+      }
+      return;
+    }
+
+    const hasAccess = voiceState.microphoneAuthorization === 'authorized'
+      && voiceState.speechAuthorization === 'authorized';
+    if (!hasAccess) {
+      startAfterPermissionRef.current = true;
+      dispatchVoiceEvent({ kind: 'requesting', message: 'Waiting for local microphone and speech permission…' });
+      try {
+        await invoke('request_voice_input_access');
+      } catch (error) {
+        startAfterPermissionRef.current = false;
+        dispatchVoiceEvent({
+          kind: 'error',
+          message: typeof error === 'string' ? error : 'Voice permission could not be requested.',
+        });
+      }
+      return;
+    }
+
+    await beginVoiceCapture();
+  };
+
+  const activeCommandHistory = React.useMemo(
+    () => commandHistory.filter(command => command.session_id === activeSession),
+    [activeSession, commandHistory]
+  );
+  const lastActiveCommand = activeCommandHistory[activeCommandHistory.length - 1];
+
+  const addPlanSuggestions = React.useCallback((plan: CommandPlan) => {
+    const timestamp = Date.now();
+    addSuggestion({
+      id: timestamp.toString(),
+      type: 'command',
+      content: plan.command,
+      confidence: plan.confidence,
+      timestamp,
+      source: plan.source,
+      riskLevel: plan.riskLevel,
+      riskReasons: plan.riskReasons,
+      requiresConfirmation: plan.requiresConfirmation,
+      requiresStrongConfirmation: plan.requiresStrongConfirmation,
+    });
+    addSuggestion({
+      id: `${timestamp}-explanation`,
+      type: 'explanation',
+      content: plan.explanation,
+      confidence: plan.confidence,
+      timestamp,
+      source: plan.source,
+    });
+    if (plan.source !== 'local_llm') {
+      void refreshLlmStatus().catch(() => undefined);
+    }
+  }, [addSuggestion, refreshLlmStatus]);
+
+  const handleNaturalLanguageSubmit = async () => {
+    if (!naturalLanguageInput.trim() || !activeSession || aiBusyRef.current) return;
+    aiBusyRef.current = true;
+    const requestId = ++aiRequestRef.current;
+    setIsPlanning(true);
+    try {
+      const plan = await invoke<CommandPlan>('create_command_plan', {
+        sessionId: activeSession,
+        input: naturalLanguageInput,
+      });
+      if (requestId !== aiRequestRef.current) return;
+      addPlanSuggestions(plan);
+      setNaturalLanguageInput('');
     } catch (error) {
+      if (requestId !== aiRequestRef.current) return;
       console.error('Natural language translation failed:', error);
       addSuggestion({
         id: Date.now().toString(),
         type: 'error',
-        content: 'Failed to translate natural language. The AI model might not be ready yet.',
-        confidence: 0.1,
-        timestamp: Date.now()
+        content: typeof error === 'string' ? error : 'Could not create a local command plan.',
+        confidence: 0,
+        source: 'unavailable',
+        timestamp: Date.now(),
       });
+    } finally {
+      if (requestId === aiRequestRef.current) {
+        aiBusyRef.current = false;
+        setIsPlanning(false);
+      }
     }
-    
-    setNaturalLanguageInput('');
   };
 
-  const handleCopy = async (suggestion: any) => {
+  const handleCancelLocalAI = async () => {
+    ++aiRequestRef.current;
+    aiBusyRef.current = false;
+    setIsPlanning(false);
+    setQuickActionLoading(null);
+    try {
+      await invoke<boolean>('cancel_ai_generation');
+    } catch (error) {
+      console.error('Could not stop local AI generation:', error);
+    }
+  };
+
+  const handleInsert = async (suggestion: AISuggestion) => {
+    if (!activeSession) return;
+    if (
+      typeof suggestion.content !== 'string' ||
+      !suggestion.content.trim() ||
+      hasUnsafeTerminalCharacters(suggestion.content)
+    ) {
+      console.error('Refused to insert unsafe command-suggestion text');
+      return;
+    }
+    await invoke('write_to_terminal', {
+      sessionId: activeSession,
+      data: suggestion.content,
+    });
+    window.dispatchEvent(new CustomEvent('ph7-focus-terminal'));
+  };
+
+  const handleCopy = async (suggestion: AISuggestion) => {
     try {
       // Extract the actual command from the suggestion content
       let textToCopy = suggestion.content;
@@ -104,18 +287,16 @@ export const AIPanel: React.FC = () => {
         });
       }, 2000);
       
-      console.log(`📋 Copied to clipboard: "${textToCopy}"`);
     } catch (error) {
       console.error('Failed to copy to clipboard:', error);
     }
   };
 
-  const handleFeedback = async (suggestion: any, isPositive: boolean) => {
+  const handleFeedback = async (suggestion: AISuggestion, isPositive: boolean) => {
     try {
       await updateFeedback(suggestion.id, suggestion.content, isPositive ? 1.0 : 0.0);
       
-      // Show temporary feedback message
-      setFeedbackMessage(isPositive ? 'Thanks! This helps the AI learn 👍' : 'Thanks for the feedback 👎');
+      setFeedbackMessage(isPositive ? 'Preference noted for this session' : 'Feedback noted for this session');
       setTimeout(() => setFeedbackMessage(null), 2000);
     } catch (error) {
       console.error('Feedback error:', error);
@@ -124,74 +305,77 @@ export const AIPanel: React.FC = () => {
     }
   };
 
-  const handleQuickAction = async (action: 'explain' | 'fix' | 'optimize' | 'analyze') => {
+  const handleQuickAction = async (action: QuickAction) => {
+    const lastCommand = lastActiveCommand;
+    if (!lastCommand || aiBusyRef.current) return;
 
-    const lastCommand = commandHistory[commandHistory.length - 1];
-    if (!lastCommand) return;
-
+    aiBusyRef.current = true;
+    const requestId = ++aiRequestRef.current;
     setQuickActionLoading(action);
 
     try {
-      let response: any = null;
-      
       switch (action) {
-        case 'explain':
-          response = await invoke('ai_explain_command', {
+        case 'explain': {
+          const response = await invoke<AIResponse>('ai_explain_command', {
             command: lastCommand.command
           });
+          if (requestId !== aiRequestRef.current) return;
           addSuggestion({
             id: Date.now().toString(),
             type: 'explanation',
-            content: response.text || response,
-            confidence: response.confidence || 0.9,
-            timestamp: Date.now()
+            content: response.text,
+            confidence: response.confidence ?? 0,
+            source: response.source,
+            timestamp: Date.now(),
           });
+          if (response.source !== 'local_llm') {
+            void refreshLlmStatus().catch(() => undefined);
+          }
           break;
-          
-        case 'fix':
-          response = await invoke('ai_fix_error', {
-            command: lastCommand.command,
-            error_output: lastCommand.output || '',
-            context: commandHistory.slice(-3).map(cmd => cmd.command).join('; ')
+        }
+        case 'fix': {
+          const errorEvidence = lastCommand.output.trim()
+            ? ` Error output: ${lastCommand.output.slice(0, 4_000)}`
+            : ` No output was captured; the exit status was ${lastCommand.exit_code ?? 'unknown'}.`;
+          const plan = await invoke<CommandPlan>('create_command_plan', {
+            sessionId: activeSession,
+            input: `Create one conservative next command to diagnose or fix this failed command: ${lastCommand.command}.${errorEvidence}`,
           });
-          addSuggestion({
-            id: Date.now().toString(),
-            type: 'fix',
-            content: response.text || response,
-            confidence: response.confidence || 0.85,
-            timestamp: Date.now()
-          });
+          if (requestId !== aiRequestRef.current) return;
+          addPlanSuggestions(plan);
           break;
-          
-        case 'optimize':
-          response = await invoke('ai_suggest_command', {
-            context: `Optimize this command: ${lastCommand.command}`,
-            intent: 'optimization'
+        }
+        case 'optimize': {
+          const plan = await invoke<CommandPlan>('create_command_plan', {
+            sessionId: activeSession,
+            input: `Create one command that optimizes this shell command while preserving its behavior and literal arguments: ${lastCommand.command}`,
           });
-          addSuggestion({
-            id: Date.now().toString(),
-            type: 'optimization',
-            content: response.text || response,
-            confidence: response.confidence || 0.8,
-            timestamp: Date.now()
-          });
+          if (requestId !== aiRequestRef.current) return;
+          addPlanSuggestions(plan);
           break;
-          
-        case 'analyze':
-          response = await invoke('ai_analyze_output', {
+        }
+        case 'analyze': {
+          const response = await invoke<AIResponse>('ai_analyze_output', {
             command: lastCommand.command,
             output: lastCommand.output || ''
           });
+          if (requestId !== aiRequestRef.current) return;
           addSuggestion({
             id: Date.now().toString(),
             type: 'analysis',
-            content: response.text || response,
-            confidence: response.confidence || 0.9,
-            timestamp: Date.now()
+            content: response.text,
+            confidence: response.confidence ?? 0,
+            source: response.source,
+            timestamp: Date.now(),
           });
+          if (response.source !== 'local_llm') {
+            void refreshLlmStatus().catch(() => undefined);
+          }
           break;
+        }
       }
     } catch (error) {
+      if (requestId !== aiRequestRef.current) return;
       console.error(`Failed to execute ${action} action:`, error);
       
       // More specific error handling
@@ -204,18 +388,22 @@ export const AIPanel: React.FC = () => {
       
       // Check if it's a model loading issue
       if (!isModelLoaded) {
-        errorMessage += ' The AI model may not be loaded yet. Please wait for model initialization to complete.';
+        errorMessage += ' Local command intelligence is not ready yet.';
       }
       
       addSuggestion({
         id: Date.now().toString(),
         type: 'error',
         content: errorMessage,
-        confidence: 0.5,
-        timestamp: Date.now()
+        confidence: 0,
+        source: 'unavailable',
+        timestamp: Date.now(),
       });
     } finally {
-      setQuickActionLoading(null);
+      if (requestId === aiRequestRef.current) {
+        aiBusyRef.current = false;
+        setQuickActionLoading(null);
+      }
     }
   };
 
@@ -225,15 +413,24 @@ export const AIPanel: React.FC = () => {
       <div className="p-4 border-b border-terminal-border flex-shrink-0">
         <div className="flex items-center space-x-2">
           <Brain className="w-5 h-5 text-ai-primary" />
-          <h2 className="font-semibold text-terminal-text">AI Assistant</h2>
+          <h2 className="font-semibold text-terminal-text">Local Command Intelligence</h2>
           {isModelLoaded && (
-            <div className="w-2 h-2 bg-ai-primary rounded-full animate-pulse-soft ml-auto"></div>
+            <span
+              className={`ml-auto h-2 w-2 rounded-full ${
+                realLlmStatus.available
+                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.55)]'
+                  : 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.4)]'
+              }`}
+              aria-label={realLlmStatus.available ? 'On-device language model ready' : 'Deterministic local intelligence ready'}
+              title={realLlmStatus.message}
+              role="status"
+            />
           )}
         </div>
         
         {/* Feedback Message */}
         {feedbackMessage && (
-          <div className="mt-2 p-2 bg-ai-primary/20 border border-ai-primary/30 rounded-md text-xs text-ai-primary animate-fade-in">
+          <div className="mt-2 p-2 bg-ai-primary/20 border border-ai-primary/30 rounded-md text-xs text-ai-primary animate-fade-in" role="status" aria-live="polite">
             {feedbackMessage}
           </div>
         )}
@@ -255,15 +452,67 @@ export const AIPanel: React.FC = () => {
               className="w-full bg-terminal-bg border border-terminal-border rounded-md px-3 py-2 text-sm text-terminal-text resize-none focus-ring"
               rows={3}
               disabled={!isModelLoaded}
+              aria-label="Describe a command to plan"
             />
+
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0 text-[11px] leading-4 text-terminal-muted" aria-live="polite" role="status">
+                <span className="block text-emerald-300/90">On-device only · audio is never stored</span>
+                <span className="block truncate" title={voiceState.message}>{voiceState.message}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => void handleVoiceInput()}
+                disabled={
+                  !isModelLoaded
+                  || voiceState.phase === 'checking'
+                  || voiceState.phase === 'requesting'
+                  || voiceState.phase === 'processing'
+                  || voiceState.phase === 'denied'
+                  || voiceState.phase === 'unavailable'
+                }
+                aria-label={voiceButtonLabel(voiceState)}
+                aria-pressed={voiceState.phase === 'listening'}
+                title={voiceState.message}
+                className={`flex flex-shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors focus-ring disabled:cursor-not-allowed disabled:opacity-50 ${
+                  voiceState.phase === 'listening'
+                    ? 'border-red-400/60 bg-red-500/20 text-red-200 hover:bg-red-500/30'
+                    : 'border-ai-primary/40 bg-ai-primary/10 text-ai-primary hover:bg-ai-primary/20'
+                }`}
+              >
+                {voiceState.phase === 'listening' ? (
+                  <Square className="h-3.5 w-3.5 fill-current" />
+                ) : voiceState.phase === 'checking' || voiceState.phase === 'requesting' || voiceState.phase === 'processing' ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Mic className="h-3.5 w-3.5" />
+                )}
+                {voiceState.phase === 'listening' ? 'Stop' : 'Voice'}
+              </button>
+            </div>
             
-            <button
-              onClick={handleNaturalLanguageSubmit}
-              disabled={!isModelLoaded || !naturalLanguageInput.trim() || isProcessing}
-              className="w-full bg-ai-primary hover:bg-ai-primary/80 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-md text-sm font-medium transition-colors focus-ring"
-            >
-              {isProcessing ? 'Processing...' : 'Convert to Command'}
-            </button>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleNaturalLanguageSubmit}
+                disabled={!isModelLoaded || !naturalLanguageInput.trim() || isProcessing || isPlanning || quickActionLoading !== null}
+                className="min-w-0 flex-1 bg-ai-primary hover:bg-ai-primary/80 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-md text-sm font-medium transition-colors focus-ring"
+              >
+                {isPlanning ? 'Planning...' : 'Create Safe Command Plan'}
+              </button>
+              {(isPlanning || quickActionLoading !== null) && (
+                <button
+                  type="button"
+                  onClick={() => void handleCancelLocalAI()}
+                  className="flex items-center gap-1.5 rounded-md border border-red-400/40 bg-red-500/10 px-3 py-2 text-sm font-medium text-red-200 transition-colors hover:bg-red-500/20 focus-ring"
+                  aria-label="Stop local AI generation"
+                  title="Stop on-device generation"
+                >
+                  <Square className="h-3.5 w-3.5 fill-current" />
+                  Stop
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -279,6 +528,7 @@ export const AIPanel: React.FC = () => {
             
             {suggestions.length > 0 && (
               <button
+                type="button"
                 onClick={clearSuggestions}
                 className="text-xs text-terminal-muted hover:text-terminal-text transition-colors"
               >
@@ -290,13 +540,24 @@ export const AIPanel: React.FC = () => {
           {!isModelLoaded ? (
             <div className="text-center py-8">
               <AlertCircle className="w-8 h-8 mx-auto text-terminal-muted mb-2" />
-              <p className="text-sm text-terminal-muted">AI model loading...</p>
+              <p className="text-sm text-terminal-muted">
+                {isProcessing ? 'AI model loading...' : 'Local AI is unavailable'}
+              </p>
+              {modelError && !isProcessing && (
+                <button
+                  type="button"
+                  onClick={() => void loadModel()}
+                  className="mt-3 px-3 py-1.5 text-xs bg-terminal-border text-terminal-text rounded hover:bg-terminal-muted/30 transition-colors"
+                >
+                  Retry AI
+                </button>
+              )}
             </div>
           ) : suggestions.length === 0 ? (
             <div className="text-center py-8">
               <Zap className="w-8 h-8 mx-auto text-terminal-muted mb-2 opacity-50" />
               <p className="text-sm text-terminal-muted">
-                Execute commands to get AI suggestions
+                Describe a task above or use a quick action on this tab's last command.
               </p>
             </div>
           ) : (
@@ -311,41 +572,76 @@ export const AIPanel: React.FC = () => {
                       {suggestion.type}
                     </span>
                     <div className="flex items-center space-x-2">
-                      <span className="text-xs text-terminal-muted">
-                        {Math.round(suggestion.confidence * 100)}%
+                      <span className="rounded bg-terminal-border/60 px-1.5 py-0.5 text-[10px] text-terminal-muted">
+                        {sourceLabel(suggestion.source)}
                       </span>
                       {suggestion.type === 'command' && (
-                        <button
-                          onClick={() => handleCopy(suggestion)}
-                          className={`p-1 rounded transition-all duration-200 relative ${
-                            copiedSuggestions.has(suggestion.id)
-                              ? 'bg-ai-primary/30 shadow-sm border border-ai-primary/40 animate-pulse-once'
-                              : 'hover:bg-ai-primary/20 hover:scale-105'
-                          }`}
-                          title={copiedSuggestions.has(suggestion.id) ? 'Copied to clipboard!' : 'Copy command to clipboard'}
-                        >
-                          {copiedSuggestions.has(suggestion.id) ? (
-                            <Check className="w-3 h-3 text-green-400 animate-fade-in" />
-                          ) : (
-                            <Copy className="w-3 h-3 text-ai-primary transition-transform" />
-                          )}
-                        </button>
+                        <>
+                          <span className={`rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide ${
+                            suggestion.riskLevel === 'critical' || suggestion.riskLevel === 'high'
+                              ? 'bg-red-500/20 text-red-300'
+                              : suggestion.riskLevel === 'medium'
+                                ? 'bg-amber-500/20 text-amber-300'
+                                : suggestion.riskLevel === 'low'
+                                  ? 'bg-emerald-500/20 text-emerald-300'
+                                  : 'bg-terminal-border text-terminal-muted'
+                          }`}>
+                            {suggestion.riskLevel ?? 'unrated'}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => void handleInsert(suggestion)}
+                            className="p-1 rounded hover:bg-ai-primary/20 hover:scale-105 transition-all"
+                            title="Insert into terminal without executing"
+                            aria-label="Insert command without executing"
+                          >
+                            <CornerDownLeft className="w-3 h-3 text-ai-primary" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(suggestion)}
+                            className={`p-1 rounded transition-all duration-200 relative ${
+                              copiedSuggestions.has(suggestion.id)
+                                ? 'bg-ai-primary/30 shadow-sm border border-ai-primary/40 animate-pulse-once'
+                                : 'hover:bg-ai-primary/20 hover:scale-105'
+                            }`}
+                            title={copiedSuggestions.has(suggestion.id) ? 'Copied to clipboard!' : 'Copy command to clipboard'}
+                            aria-label={copiedSuggestions.has(suggestion.id) ? 'Command copied' : 'Copy command to clipboard'}
+                          >
+                            {copiedSuggestions.has(suggestion.id) ? (
+                              <Check className="w-3 h-3 text-green-400 animate-fade-in" />
+                            ) : (
+                              <Copy className="w-3 h-3 text-ai-primary transition-transform" />
+                            )}
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
                   
-                  <p className="text-sm text-terminal-text leading-relaxed">
+                  <p className={`text-sm text-terminal-text leading-relaxed ${suggestion.type === 'command' ? 'font-mono break-words' : ''}`}>
                     {suggestion.content}
                   </p>
+                  {suggestion.type === 'command' && suggestion.riskReasons && suggestion.riskReasons.length > 0 && (
+                    <p className="mt-2 text-xs text-terminal-muted">
+                      {suggestion.riskReasons.join(' • ')}
+                    </p>
+                  )}
+                  {suggestion.type === 'command' && suggestion.requiresStrongConfirmation && (
+                    <p className="mt-2 rounded border border-red-400/30 bg-red-500/10 px-2 py-1.5 text-xs text-red-200">
+                      High-impact plan. Inserting does not execute it; inspect every argument before pressing Enter.
+                    </p>
+                  )}
                   
                   <div className="flex items-center justify-between mt-2">
                     <div className="text-xs text-terminal-muted">
                       {new Date(suggestion.timestamp).toLocaleTimeString()}
                     </div>
                     
-                    {/* Feedback buttons for learning */}
+                    {/* Feedback adjusts memory-only preferences for this session. */}
                     <div className="flex items-center space-x-1">
                       <button
+                        type="button"
                         onClick={() => handleFeedback(suggestion, true)}
                         className={`p-1 rounded transition-all duration-200 ${
                           suggestion.feedback === 'positive' 
@@ -353,6 +649,8 @@ export const AIPanel: React.FC = () => {
                             : 'hover:bg-green-500/20'
                         }`}
                         title={suggestion.feedback === 'positive' ? 'You marked this as helpful' : 'Mark as helpful'}
+                        aria-label="Mark suggestion as helpful"
+                        aria-pressed={suggestion.feedback === 'positive'}
                       >
                         <ThumbsUp 
                           className={`w-3 h-3 transition-all duration-200 ${
@@ -364,6 +662,7 @@ export const AIPanel: React.FC = () => {
                         />
                       </button>
                       <button
+                        type="button"
                         onClick={() => handleFeedback(suggestion, false)}
                         className={`p-1 rounded transition-all duration-200 ${
                           suggestion.feedback === 'negative' 
@@ -371,6 +670,8 @@ export const AIPanel: React.FC = () => {
                             : 'hover:bg-red-500/20'
                         }`}
                         title={suggestion.feedback === 'negative' ? 'You marked this as not helpful' : 'Mark as not helpful'}
+                        aria-label="Mark suggestion as not helpful"
+                        aria-pressed={suggestion.feedback === 'negative'}
                       >
                         <ThumbsDown 
                           className={`w-3 h-3 transition-all duration-200 ${
@@ -399,32 +700,38 @@ export const AIPanel: React.FC = () => {
           
           <div className="grid grid-cols-2 gap-2">
             <button 
+              type="button"
               onClick={() => handleQuickAction('explain')}
-              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing || quickActionLoading !== null}
+              disabled={!isModelLoaded || !lastActiveCommand || isProcessing || isPlanning || quickActionLoading !== null}
               className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {quickActionLoading === 'explain' ? 'Explaining...' : 'Explain Last'}
             </button>
             
             <button 
+              type="button"
               onClick={() => handleQuickAction('fix')}
-              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing || quickActionLoading !== null}
+              disabled={!isModelLoaded || !lastActiveCommand || lastActiveCommand.exit_code == null || lastActiveCommand.exit_code === 0 || isProcessing || isPlanning || quickActionLoading !== null}
+              title={lastActiveCommand?.exit_code ? 'Create a conservative plan for the last failed command' : 'The last command did not fail'}
               className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {quickActionLoading === 'fix' ? 'Fixing...' : 'Fix Error'}
             </button>
             
             <button 
+              type="button"
               onClick={() => handleQuickAction('optimize')}
-              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing || quickActionLoading !== null}
+              disabled={!isModelLoaded || !lastActiveCommand || isProcessing || isPlanning || quickActionLoading !== null}
               className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {quickActionLoading === 'optimize' ? 'Optimizing...' : 'Optimize'}
             </button>
             
             <button 
+              type="button"
               onClick={() => handleQuickAction('analyze')}
-              disabled={!isModelLoaded || commandHistory.length === 0 || isProcessing || quickActionLoading !== null}
+              disabled={!isModelLoaded || !lastActiveCommand?.output.trim() || isProcessing || isPlanning || quickActionLoading !== null}
+              title={lastActiveCommand?.output.trim() ? 'Analyze captured output' : 'No command output was captured for this history entry'}
               className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {quickActionLoading === 'analyze' ? 'Analyzing...' : 'Analyze'}

@@ -7,7 +7,6 @@ import {
   Search,
   ChevronRight,
   ChevronDown,
-  Home,
   RefreshCw,
   X,
   FileText,
@@ -75,30 +74,17 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
 
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Debug: Log prop values
-  useEffect(() => {
-    console.log(`🔧 FileExplorer Props Debug:`, {
-      currentPath,
-      hasOnPathChange: !!onPathChange,
-      hasOnFileSelect: !!onFileSelect,
-      activeSessionId
-    });
-  }, [currentPath, onPathChange, onFileSelect, activeSessionId]);
-
   // Load initial directory
   useEffect(() => {
-    console.log(`🔄 FileExplorer: Loading directory: ${currentPath}`);
     loadDirectory(currentPath);
   }, [currentPath]);
 
   const loadDirectory = async (path: string) => {
     try {
-      console.log(`📂 FileExplorer: loadDirectory called with path: ${path}`);
       setLoading(true);
       const children = await invoke<DirectoryInfo[]>('get_child_directories', {
         currentPath: path
       });
-      console.log(`📂 FileExplorer: Loaded ${children.length} items from: ${path}`);
 
       // Create root item for current directory
       const currentDir: FileExplorerItem = {
@@ -116,7 +102,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
 
       setFileTree([currentDir]);
       setExpandedPaths(new Set([path]));
-      console.log(`✅ FileExplorer: Successfully loaded directory: ${path}`);
     } catch (error) {
       console.error('❌ FileExplorer: Failed to load directory:', error);
     } finally {
@@ -146,8 +131,8 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
 
           // Update tree with loaded children
           setFileTree(prevTree => updateTreeWithChildren(prevTree, item.path, children, item.level + 1));
-        } catch (error) {
-          console.error('Failed to load children for', item.path, error);
+        } catch {
+          console.error('Failed to load directory children');
         }
       }
     }
@@ -220,87 +205,17 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
 
   // Enhanced file opening with multiple options
   const openFileWithOption = async (item: FileExplorerItem, option: 'default' | 'editor' | 'terminal' | 'system' | 'reveal') => {
-    const category = getFileCategory(item.name, item.is_directory);
-    console.log(`🎯 FileExplorer: Opening ${item.name} (${category}) with option: ${option}`);
-
-    if (!activeSessionId && option !== 'system' && option !== 'reveal') {
+    if (!activeSessionId) {
       alert('Please create a terminal session first by clicking the "+" button in the Terminals tab');
       return;
     }
 
     try {
-      let command: string;
-      
-      switch (option) {
-        case 'editor':
-          // Always open in editor, preferring VS Code if available, then nano
-          if (category === 'text' || category === 'unknown') {
-            command = `code "${item.path}" 2>/dev/null || nano "${item.path}"`;
-          } else {
-            throw new Error('File type not suitable for text editor');
-          }
-          break;
-          
-        case 'terminal':
-          // Execute in terminal (for scripts) or show content (for text files)
-          if (category === 'text') {
-            command = `cat "${item.path}"`;
-          } else if (category === 'executable' || item.name.endsWith('.sh')) {
-            command = `"${item.path}"`;
-          } else {
-            command = `file "${item.path}" && echo "Use 'open' to view this file"`;
-          }
-          break;
-          
-        case 'system':
-          // Use system default application
-          command = `open "${item.path}"`;
-          break;
-          
-        case 'reveal':
-          // Reveal in Finder (macOS) or file manager
-          command = `open -R "${item.path}"`;
-          break;
-          
-        case 'default':
-        default:
-          // Smart default based on file type
-          switch (category) {
-            case 'text':
-              command = `code "${item.path}" 2>/dev/null || nano "${item.path}"`;
-              break;
-            case 'image':
-            case 'video':
-            case 'audio':
-            case 'document':
-              command = `open "${item.path}"`;
-              break;
-            case 'archive':
-              command = `echo "Archive: ${item.name}" && file "${item.path}"`;
-              break;
-            case 'executable':
-              command = `echo "Executable: ${item.name}. Use right-click to run or open."`;
-              break;
-            default:
-              command = `file "${item.path}" && echo "\\nUse 'open ${item.name}' to view with system default"`;
-          }
-          break;
-      }
-
-      if (activeSessionId) {
-        const result = await invoke<string>('execute_command', {
-          sessionId: activeSessionId,
-          command: command
-        });
-        console.log(`✅ FileExplorer: Command executed successfully. Result: ${result}`);
-      } else if (option === 'system' || option === 'reveal') {
-        // For system commands, we can still execute them
-        const result = await invoke<string>('execute_command', {
-          sessionId: 'system', // Use a special system session
-          command: command
-        });
-        console.log(`✅ FileExplorer: System command executed successfully. Result: ${result}`);
-      }
+      await invoke('file_action', {
+        sessionId: activeSessionId,
+        filePath: item.path,
+        action: option,
+      });
 
     } catch (error) {
       console.error(`❌ FileExplorer: Failed to open file with option ${option}:`, error);
@@ -310,18 +225,12 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
 
   // Main click handler for items
   const handleItemClick = async (item: FileExplorerItem) => {
-    console.log(`🖱️ FileExplorer: Clicked on ${item.is_directory ? 'directory' : 'file'}: ${item.path}`);
-
     if (item.is_directory) {
       // Handle directory navigation
       try {
-        console.log(`📁 FileExplorer: Navigating to directory: ${item.path}`);
-        
         if (onPathChange) {
           onPathChange(item.path);
-          console.log(`✅ FileExplorer: Directory navigation successful`);
         } else {
-          console.log(`❌ FileExplorer: No onPathChange callback available!`);
           return;
         }
 
@@ -332,7 +241,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
               sessionId: activeSessionId,
               newPath: item.path
             });
-            console.log(`✅ FileExplorer: Terminal directory changed to: ${item.path}`);
           } catch (invokeError) {
             console.error(`❌ FileExplorer: Failed to change terminal directory:`, invokeError);
           }
@@ -355,8 +263,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
   // Enhanced context menu handler (right-click)
   const handleContextMenu = (event: React.MouseEvent, item: FileExplorerItem) => {
     event.preventDefault();
-    console.log('🖱️ Context menu requested for:', item);
-    
     // Set context menu state with position and item
     setContextMenu({
       x: event.clientX,
@@ -526,10 +432,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
           className="flex items-center gap-1 py-2 px-2 hover:bg-terminal-border rounded cursor-pointer transition-colors group active:bg-ai-primary/20 min-h-[28px]"
           style={{ paddingLeft: `${item.level * 16 + 8}px` }}
           onClick={() => {
-            console.log(`🖱️ CLICK DETECTED: ${item.name} (${item.is_directory ? 'directory' : 'file'})`);
-            console.log(`🖱️ Path: ${item.path}`);
-            console.log(`🖱️ Category: ${category}`);
-            console.log(`🖱️ Props available: onPathChange=${!!onPathChange}, activeSessionId=${activeSessionId}`);
             handleItemClick(item);
           }}
           onContextMenu={(e) => handleContextMenu(e, item)}
@@ -657,7 +559,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
             {!activeSessionId && (
               <button
                 onClick={() => {
-                  console.log(`🔧 FileExplorer: No active session - user should create a terminal first`);
                   alert('Please create a terminal session first by clicking the "+" button in the Terminals tab');
                 }}
                 className="p-1 bg-orange-500 hover:bg-orange-600 rounded transition-colors text-xs text-white"
@@ -684,13 +585,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
               title="Refresh"
             >
               <RefreshCw className="w-3 h-3 text-terminal-muted" />
-            </button>
-            <button
-              onClick={() => onPathChange?.('/Users')}
-              className="p-1 hover:bg-terminal-border rounded transition-colors"
-              title="Go to Home"
-            >
-              <Home className="w-3 h-3 text-terminal-muted" />
             </button>
           </div>
         </div>
@@ -731,10 +625,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
             {fileTree.length === 0 ? (
               <div className="text-terminal-muted text-sm">No items to display</div>
             ) : (
-              fileTree.map(item => {
-                console.log(`🎯 Rendering tree item: ${item.name} at level ${item.level}`);
-                return renderTreeItem(item);
-              })
+              fileTree.map(item => renderTreeItem(item))
             )}
           </div>
         )}
@@ -772,11 +663,10 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                   onClick={async () => {
                     if (activeSessionId) {
                       try {
-                        await invoke('execute_command', {
+                        await invoke('change_directory', {
                           sessionId: activeSessionId,
-                          command: `cd "${contextMenu.item.path}"`
+                          newPath: contextMenu.item.path
                         });
-                        console.log(`📁 Changed terminal directory to: ${contextMenu.item.path}`);
                       } catch (error) {
                         console.error('Failed to change terminal directory:', error);
                       }
@@ -813,7 +703,7 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                 >
                   <FileText className="w-4 h-4" />
                   <span>Open in Editor</span>
-                  <span className="text-xs text-terminal-muted ml-auto">VS Code/nano</span>
+                  <span className="text-xs text-terminal-muted ml-auto">macOS</span>
                 </button>
               </>
             )}
@@ -838,7 +728,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
               onClick={async () => {
                 try {
                   await navigator.clipboard.writeText(contextMenu.item.path);
-                  console.log('📋 Copied path to clipboard:', contextMenu.item.path);
                 } catch (error) {
                   console.error('Failed to copy path:', error);
                 }
@@ -853,7 +742,6 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
               onClick={async () => {
                 try {
                   await navigator.clipboard.writeText(contextMenu.item.name);
-                  console.log('📋 Copied name to clipboard:', contextMenu.item.name);
                 } catch (error) {
                   console.error('Failed to copy name:', error);
                 }
@@ -871,11 +759,11 @@ export const FileExplorer: React.FC<FileExplorerProps> = ({
                 onClick={async () => {
                   if (activeSessionId) {
                     try {
-                      const result = await invoke<string>('execute_command', {
+                      await invoke('file_action', {
                         sessionId: activeSessionId,
-                        command: `ls -la "${contextMenu.item.path}" && file "${contextMenu.item.path}"`
+                        filePath: contextMenu.item.path,
+                        action: 'properties',
                       });
-                      console.log(`📋 File properties: ${result}`);
                     } catch (error) {
                       console.error('Failed to get file properties:', error);
                     }

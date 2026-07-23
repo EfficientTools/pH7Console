@@ -3,10 +3,28 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --ui-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  }
+
+  html {
+    color-scheme: dark;
+  }
+
   body {
     @apply bg-terminal-bg text-terminal-text;
-    font-family: var(--terminal-font, ui-monospace, 'SF Mono', Monaco, Menlo, Consolas, monospace);
-    font-size: var(--terminal-font-size, 14px);
+    font-family: var(--ui-font);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+    overflow: hidden;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
   }
 }
 
@@ -33,6 +51,22 @@
   .ai-badge {
     @apply bg-gradient-to-r from-ai-primary to-ai-secondary text-white px-2 py-1 rounded-full text-xs font-medium;
   }
+
+  .terminal-toolbar-button {
+    @apply inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-terminal-muted transition-colors hover:bg-terminal-border hover:text-terminal-text focus:outline-none focus-visible:ring-2 focus-visible:ring-ai-primary;
+  }
+}
+
+.ph7-xterm-host .xterm {
+  height: 100%;
+}
+
+.ph7-xterm-host .xterm-viewport {
+  overscroll-behavior: contain;
+}
+
+.ph7-xterm-host .xterm-screen canvas {
+  image-rendering: auto;
 }
 
 /* Custom scrollbar */
@@ -80,4 +114,15 @@
 
 .animate-pulse-once {
   animation: pulseOnce 0.4s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }

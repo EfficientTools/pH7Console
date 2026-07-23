@@ -1,13 +1,21 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { History, Search, Clock, CheckCircle, XCircle, X, ArrowUp, ArrowDown } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { History, Search, Clock, CheckCircle, XCircle, X, ArrowUp, ArrowDown, Trash2 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { CommandExecution } from '../store/terminalStore';
 import { useClickOutside } from '../hooks/useClickOutside';
+
+interface HistoryPersistenceStatus {
+  encryptedPersistence: boolean;
+  mode: 'encrypted' | 'memory_only';
+  message: string;
+}
 
 interface HistoryModalProps {
   isOpen: boolean;
   onClose: () => void;
   commandHistory: CommandExecution[];
   onSelectCommand: (command: string) => void;
+  onClearHistory: () => Promise<void>;
 }
 
 export const HistoryModal: React.FC<HistoryModalProps> = ({
@@ -15,36 +23,101 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
   onClose,
   commandHistory,
   onSelectCommand,
+  onClearHistory,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [filteredHistory, setFilteredHistory] = useState<CommandExecution[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [persistenceStatus, setPersistenceStatus] = useState<HistoryPersistenceStatus | null>(null);
+  const [isClearing, setIsClearing] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
   // Close modal when clicking outside
   useClickOutside(modalRef, onClose, isOpen);
 
-  // Filter history based on search query
-  useEffect(() => {
-    if (searchQuery.trim() === '') {
-      setFilteredHistory(commandHistory.slice().reverse()); // Most recent first
-    } else {
-      const filtered = commandHistory
-        .filter(cmd => 
-          cmd.command.toLowerCase().includes(searchQuery.toLowerCase())
-        )
-        .reverse(); // Most recent first
-      setFilteredHistory(filtered);
+  const handleSelectCommand = useCallback((command: string) => {
+    onSelectCommand(command);
+    onClose();
+  }, [onClose, onSelectCommand]);
+
+  const handleClearHistory = useCallback(async () => {
+    if (!window.confirm('Clear all completed command history from this Mac? This cannot be undone.')) {
+      return;
     }
-    setSelectedIndex(0); // Reset selection when search changes
-  }, [searchQuery, commandHistory]);
+    setIsClearing(true);
+    try {
+      await onClearHistory();
+      setSearchQuery('');
+    } catch (error) {
+      console.error('Could not clear encrypted command history:', error);
+      window.alert('Command history could not be cleared. No history was hidden from this view.');
+    } finally {
+      setIsClearing(false);
+    }
+  }, [onClearHistory]);
+
+  // Search the complete encrypted FTS index rather than only the recent rows
+  // already loaded into the WebView. A local fallback keeps memory-only mode
+  // useful and makes transient native failures non-blocking.
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (!isOpen || query === '') {
+      setFilteredHistory(commandHistory.slice().reverse()); // Most recent first
+      setIsSearching(false);
+      setSelectedIndex(0);
+      return;
+    }
+
+    let cancelled = false;
+    setIsSearching(true);
+    const timer = window.setTimeout(() => {
+      invoke<CommandExecution[]>('search_command_history_records', { query, limit: 100 })
+        .then((records) => {
+          if (!cancelled) setFilteredHistory(records);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          const queryLower = query.toLowerCase();
+          setFilteredHistory(
+            commandHistory
+              .filter(command => command.command.toLowerCase().includes(queryLower))
+              .reverse()
+          );
+        })
+        .finally(() => {
+          if (!cancelled) setIsSearching(false);
+        });
+    }, 120);
+
+    setSelectedIndex(0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [commandHistory, isOpen, searchQuery]);
 
   // Auto-focus search input when modal opens
   useEffect(() => {
     if (isOpen && searchInputRef.current) {
       searchInputRef.current.focus();
     }
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    invoke<HistoryPersistenceStatus>('get_history_persistence_status')
+      .then((status) => {
+        if (!cancelled) setPersistenceStatus(status);
+      })
+      .catch(() => {
+        if (!cancelled) setPersistenceStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen]);
 
   // Keyboard navigation
@@ -78,7 +151,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, filteredHistory, selectedIndex]);
+  }, [isOpen, filteredHistory, selectedIndex, handleSelectCommand, onClose]);
 
   // Scroll selected item into view
   useEffect(() => {
@@ -90,11 +163,6 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
       });
     }
   }, [selectedIndex]);
-
-  const handleSelectCommand = (command: string) => {
-    onSelectCommand(command);
-    onClose();
-  };
 
   const formatTimestamp = (timestamp: string) => {
     const date = new Date(timestamp);
@@ -129,20 +197,39 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div 
         ref={modalRef}
-        className="bg-terminal-bg border border-terminal-border rounded-lg shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col"
+        className="bg-terminal-bg border border-terminal-border rounded-xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col overflow-hidden"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="history-title"
       >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-terminal-border">
           <div className="flex items-center space-x-3">
             <History className="w-5 h-5 text-ai-primary" />
-            <h2 className="text-lg font-semibold text-terminal-text">Command History</h2>
+            <h2 id="history-title" className="text-lg font-semibold text-terminal-text">Command History</h2>
             <span className="text-sm text-terminal-muted">
-              ({filteredHistory.length} of {commandHistory.length} commands)
+              {searchQuery.trim()
+                ? `(${isSearching ? 'Searching…' : `${filteredHistory.length} results`})`
+                : `(${commandHistory.length} recent commands)`}
             </span>
+            {persistenceStatus && (
+              <span
+                className={`rounded-full border px-2 py-0.5 text-xs ${
+                  persistenceStatus.encryptedPersistence
+                    ? 'border-green-400/30 bg-green-400/10 text-green-300'
+                    : 'border-amber-400/30 bg-amber-400/10 text-amber-300'
+                }`}
+                title={persistenceStatus.message}
+              >
+                {persistenceStatus.message}
+              </span>
+            )}
           </div>
           <button
+            type="button"
             onClick={onClose}
             className="p-1 rounded hover:bg-terminal-border transition-colors"
+            aria-label="Close command history"
           >
             <X className="w-5 h-5 text-terminal-muted" />
           </button>
@@ -159,6 +246,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search command history... (use ↑↓ to navigate, Enter to select)"
               className="w-full pl-10 pr-4 py-2 bg-terminal-bg border border-terminal-border rounded focus:border-ai-primary focus:ring-1 focus:ring-ai-primary transition-colors text-terminal-text placeholder-terminal-muted"
+              aria-label="Search command history"
             />
           </div>
         </div>
@@ -175,7 +263,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
               </div>
             </div>
           ) : (
-            <div className="overflow-y-auto max-h-full">
+            <div className="overflow-y-auto max-h-full" role="listbox" aria-label="Command history results">
               {filteredHistory.map((execution, index) => (
                 <div
                   key={execution.id}
@@ -186,6 +274,8 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                       : 'hover:bg-terminal-border/50'
                   }`}
                   onClick={() => handleSelectCommand(execution.command)}
+                  role="option"
+                  aria-selected={index === selectedIndex}
                 >
                   <div className="p-4">
                     {/* Command and Status */}
@@ -260,8 +350,19 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                 <span>Close</span>
               </div>
             </div>
-            <div>
-              {selectedIndex + 1} of {filteredHistory.length}
+            <div className="flex items-center gap-3">
+              <span>
+                {filteredHistory.length === 0 ? 0 : selectedIndex + 1} of {filteredHistory.length}
+              </span>
+              <button
+                type="button"
+                onClick={() => void handleClearHistory()}
+                disabled={isClearing || commandHistory.length === 0}
+                className="inline-flex items-center gap-1 rounded border border-red-400/30 px-2 py-1 text-red-300 transition-colors hover:bg-red-400/10 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Trash2 className="h-3 w-3" />
+                {isClearing ? 'Clearing…' : 'Clear all'}
+              </button>
             </div>
           </div>
         </div>

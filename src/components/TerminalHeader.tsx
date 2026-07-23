@@ -45,9 +45,18 @@ interface TerminalHeaderProps {
   currentPath: string;
   onPathChange?: (newPath: string) => void;
   activeSessionId?: string;
+  refreshToken?: number;
 }
 
-const TerminalHeader: React.FC<TerminalHeaderProps> = ({ currentPath, onPathChange, activeSessionId }) => {
+const runtimeCache = new Map<string, { expiresAt: number; value: RuntimeInfo }>();
+const RUNTIME_CACHE_MS = 30_000;
+
+const TerminalHeader: React.FC<TerminalHeaderProps> = ({
+  currentPath,
+  onPathChange,
+  activeSessionId,
+  refreshToken = 0,
+}) => {
   const [repoInfo, setRepoInfo] = useState<RepoInfo | null>(null);
   const [runtimeInfo, setRuntimeInfo] = useState<RuntimeInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -58,32 +67,43 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({ currentPath, onPathChan
   const dropdownRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const fetchRepoInfo = async () => {
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
       try {
         setLoading(true);
-        
-        // First, get repository info
         const repo = await invoke<RepoInfo>('get_repo_info', { path: currentPath });
+        if (cancelled) return;
         setRepoInfo(repo);
-        
-        // Only fetch runtime info if we're in a git repository
+
         if (repo.is_git_repo) {
-          const runtime = await invoke<RuntimeInfo>('get_runtime_info', { path: currentPath });
+          const cached = runtimeCache.get(currentPath);
+          const runtime = cached && cached.expiresAt > Date.now()
+            ? cached.value
+            : await invoke<RuntimeInfo>('get_runtime_info', { path: currentPath });
+          if (cancelled) return;
+          runtimeCache.set(currentPath, {
+            expiresAt: Date.now() + RUNTIME_CACHE_MS,
+            value: runtime,
+          });
           setRuntimeInfo(runtime);
         } else {
           setRuntimeInfo(null);
         }
       } catch (error) {
+        if (cancelled) return;
         console.error('❌ TerminalHeader: Error fetching repository info:', error);
         setRepoInfo(null);
         setRuntimeInfo(null);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
-    };
+    }, 120);
 
-    fetchRepoInfo();
-  }, [currentPath]);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [currentPath, refreshToken]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -92,10 +112,15 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({ currentPath, onPathChan
         setShowPathDropdown(false);
       }
     };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowPathDropdown(false);
+    };
 
     document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
     };
   }, []);
 
@@ -130,79 +155,18 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({ currentPath, onPathChan
   const handleDirectorySelect = async (itemPath: string, isDirectory: boolean = true) => {
     try {
       if (isDirectory) {
-        console.log(`📁 TerminalHeader: Directory selected: ${itemPath}`);
-        
-        // First, change the terminal's working directory if we have an active session
-        if (activeSessionId) {
-          try {
-            console.log(`🔄 TerminalHeader: Executing cd command to: ${itemPath}`);
-            const result = await invoke<string>('execute_command', {
-              sessionId: activeSessionId,
-              command: `cd "${itemPath}" && pwd`
-            });
-            console.log(`✅ TerminalHeader: Successfully changed terminal directory. PWD result: ${result}`);
-            
-            // Also update the terminal prompt by sending a dummy command to refresh it
-            setTimeout(async () => {
-              try {
-                await invoke<string>('execute_command', {
-                  sessionId: activeSessionId,
-                  command: 'echo "Directory changed to $(pwd)"'
-                });
-              } catch (error) {
-                // Ignore errors for this notification
-                console.log('Info: Directory change notification failed, but cd command succeeded');
-              }
-            }, 100);
-            
-          } catch (error) {
-            console.error(`❌ TerminalHeader: Failed to change terminal directory to: ${itemPath}`, error);
-            // Still update the visual path even if cd command fails
-          }
-        } else {
-          console.log(`⚠️ TerminalHeader: No active session ID available for cd command to: ${itemPath}`);
-          console.log(`   Available activeSessionId: ${activeSessionId}`);
-        }
-        
-        // Then update the visual path display
-        if (onPathChange) {
-          console.log(`🎯 TerminalHeader: Updating visual path display to: ${itemPath}`);
-          onPathChange(itemPath);
-        } else {
-          console.log(`⚠️ TerminalHeader: onPathChange callback not available`);
-        }
+        if (!activeSessionId) throw new Error('No active terminal session');
+        const workingDirectory = await invoke<string>('change_directory', {
+          sessionId: activeSessionId,
+          newPath: itemPath,
+        });
+        onPathChange?.(workingDirectory);
       } else {
-        // Handle file selection - open in appropriate editor
-        console.log(`📄 TerminalHeader: File selected: ${itemPath}`);
-        
-        if (activeSessionId) {
-          // Determine if it's a text file and open in appropriate editor
-          const extension = itemPath.split('.').pop()?.toLowerCase();
-          const textExtensions = ['txt', 'md', 'js', 'jsx', 'ts', 'tsx', 'py', 'rb', 'php', 'java', 'cpp', 'c', 'h', 'go', 'rs', 'swift', 'json', 'yaml', 'yml', 'xml', 'csv', 'html', 'css', 'scss', 'less', 'conf', 'cfg', 'ini', 'env', 'toml'];
-          
-          let command: string;
-          if (textExtensions.includes(extension || '')) {
-            // Open in nano for text files
-            command = `nano "${itemPath}"`;
-            console.log(`📝 TerminalHeader: Opening text file in nano: ${itemPath}`);
-          } else {
-            // Try to open with system default for other files
-            command = `open "${itemPath}"`;
-            console.log(`📂 TerminalHeader: Opening file with system default: ${itemPath}`);
-          }
-          
-          try {
-            const result = await invoke<string>('execute_command', {
-              sessionId: activeSessionId,
-              command: command
-            });
-            console.log(`✅ TerminalHeader: File opened successfully. Result: ${result}`);
-          } catch (error) {
-            console.error(`❌ TerminalHeader: Failed to open file: ${itemPath}`, error);
-          }
-        } else {
-          console.log(`❌ TerminalHeader: No active session ID available for opening file: ${itemPath}`);
-        }
+        if (!activeSessionId) throw new Error('No active terminal session');
+        await invoke('execute_file', {
+          sessionId: activeSessionId,
+          filePath: itemPath,
+        });
       }
       setShowPathDropdown(false);
     } catch (error) {
@@ -418,30 +382,30 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({ currentPath, onPathChan
 
   if (loading) {
     return (
-      <div className="bg-gray-800 border-b border-gray-700 p-2 text-sm">
+      <div className="h-11 shrink-0 bg-terminal-surface border-b border-terminal-border px-3 py-2 text-sm" aria-label="Loading workspace context">
         <div className="flex items-center gap-4">
-          <div className="w-48 h-4 bg-gray-700 rounded animate-pulse"></div>
+          <div className="w-48 h-4 bg-terminal-border rounded animate-pulse"></div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="bg-gray-800 border-b border-gray-700 p-2 text-sm">
-      <div className="flex items-center gap-4 text-gray-300">
+    <div className="h-11 shrink-0 bg-terminal-surface border-b border-terminal-border px-3 py-2 text-sm">
+      <div className="flex min-w-0 items-center gap-2 text-terminal-muted">
         {/* Repository Section */}
         {repoInfo?.is_git_repo && (
-          <div className="flex items-center gap-3 px-2 py-1 bg-green-900/20 border border-green-700/30 rounded">
-            <div className="flex items-center gap-2">
+          <div className="flex min-w-0 items-center gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1">
+            <div className="flex min-w-0 items-center gap-2">
               <Package size={14} className="text-green-400" />
-              <span className="font-medium text-green-300">
+              <span className="max-w-40 truncate font-medium text-emerald-300">
                 {repoInfo.repo_name || 'Unknown Repository'}
               </span>
             </div>
             
-            <div className="flex items-center gap-2">
-              <GitBranch size={12} className="text-gray-400" />
-              <span className="text-gray-400">
+            <div className="flex items-center gap-1.5 font-mono text-xs">
+              <GitBranch size={12} className="text-terminal-muted" />
+              <span className="max-w-28 truncate text-terminal-muted">
                 {repoInfo.current_branch || 'main'}
               </span>
               
@@ -465,23 +429,31 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({ currentPath, onPathChan
 
         {/* Path Section */}
         <div className="relative" ref={dropdownRef}>
-          <div
-            className="flex items-center gap-2 px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded cursor-pointer transition-colors"
+          <button
+            type="button"
+            className="flex max-w-72 items-center gap-2 rounded-md border border-transparent bg-terminal-border/70 px-2 py-1 text-terminal-text transition-colors hover:border-terminal-muted/30 hover:bg-terminal-border focus:outline-none focus-visible:ring-2 focus-visible:ring-ai-primary"
             onClick={handlePathClick}
+            aria-expanded={showPathDropdown}
+            aria-haspopup="menu"
+            title={currentPath}
           >
-            <Code size={12} className="text-gray-400" />
-            <span className="font-medium">{formatPath(currentPath)}</span>
+            <Code size={12} className="shrink-0 text-terminal-muted" />
+            <span className="truncate font-mono text-xs font-medium">{formatPath(currentPath)}</span>
             <ChevronDown 
               size={10} 
-              className={`text-gray-400 transition-transform ${showPathDropdown ? 'rotate-180' : ''}`}
+              className={`shrink-0 text-terminal-muted transition-transform ${showPathDropdown ? 'rotate-180' : ''}`}
             />
-          </div>
+          </button>
 
           {/* Directory Navigation Dropdown */}
           {showPathDropdown && (
-            <div className="absolute top-full left-0 mt-1 w-64 bg-gray-800 border border-gray-600 rounded-md shadow-xl z-50 max-h-80 overflow-y-auto">
+            <div
+              className="absolute top-full left-0 z-50 mt-1 max-h-80 w-72 overflow-y-auto rounded-lg border border-terminal-border bg-terminal-surface py-1 shadow-2xl"
+              role="menu"
+              aria-label="Workspace navigation"
+            >
               {dropdownLoading ? (
-                <div className="p-3 text-center text-gray-400">
+                <div className="p-3 text-center text-terminal-muted" role="status">
                   Loading directories...
                 </div>
               ) : (
@@ -489,20 +461,22 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({ currentPath, onPathChan
                   {/* Parent Directories */}
                   {parentDirectories.length > 0 && (
                     <>
-                      <div className="px-3 py-2 text-xs font-medium text-gray-500 border-b border-gray-700 uppercase tracking-wide">
+                      <div className="px-3 py-2 text-[11px] font-medium text-terminal-muted border-b border-terminal-border uppercase tracking-wide">
                         ↑ Parent Directories
                       </div>
-                      {parentDirectories.slice(0, 5).map((dir, index) => (
-                        <div
-                          key={`parent-${index}`}
-                          className="flex items-center gap-2 px-3 py-2 hover:bg-gray-700 cursor-pointer text-sm"
+                      {parentDirectories.slice(0, 5).map((dir) => (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          key={`parent-${dir.path}`}
+                          className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-terminal-text transition-colors hover:bg-terminal-border focus:outline-none focus-visible:bg-terminal-border"
                           onClick={() => handleDirectorySelect(dir.path, true)}
                           title={`Navigate to ${dir.name === '' ? 'root' : dir.name}`}
                         >
-                          <Home size={12} className="text-gray-400" />
-                          <span>{dir.name === '' ? '/' : dir.name}</span>
-                          <span className="ml-auto text-xs text-gray-500">cd →</span>
-                        </div>
+                          <Home size={12} className="shrink-0 text-terminal-muted" />
+                          <span className="truncate">{dir.name === '' ? '/' : dir.name}</span>
+                          <span className="ml-auto text-xs text-terminal-muted">cd →</span>
+                        </button>
                       ))}
                     </>
                   )}
@@ -510,13 +484,15 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({ currentPath, onPathChan
                   {/* Child Directories and Files */}
                   {childDirectories.length > 0 && (
                     <>
-                      <div className="px-3 py-2 text-xs font-medium text-gray-500 border-b border-gray-700 border-t uppercase tracking-wide">
+                      <div className="px-3 py-2 text-[11px] font-medium text-terminal-muted border-b border-terminal-border border-t uppercase tracking-wide">
                         ↓ Contents
                       </div>
-                      {childDirectories.slice(0, 10).map((item, index) => (
-                        <div
-                          key={`child-${index}`}
-                          className={`flex items-center gap-2 px-3 py-2 cursor-pointer text-sm transition-colors ${
+                      {childDirectories.slice(0, 10).map((item) => (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          key={`child-${item.path}`}
+                          className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors focus:outline-none focus-visible:bg-terminal-border ${
                             item.is_directory 
                               ? 'hover:bg-green-900/20 hover:text-green-300' 
                               : 'hover:bg-blue-900/20 hover:text-blue-300'
@@ -529,14 +505,14 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({ currentPath, onPathChan
                           ) : (
                             <File size={12} className="text-gray-400" />
                           )}
-                          <span>{item.name}</span>
+                          <span className="truncate">{item.name}</span>
                           {item.is_directory && (
-                            <span className="ml-auto text-xs text-gray-500">cd →</span>
+                            <span className="ml-auto text-xs text-terminal-muted">cd →</span>
                           )}
-                        </div>
+                        </button>
                       ))}
                       {childDirectories.length > 10 && (
-                        <div className="px-3 py-2 text-xs text-gray-500 text-center italic">
+                        <div className="px-3 py-2 text-xs text-terminal-muted text-center italic">
                           ... and {childDirectories.length - 10} more items
                         </div>
                       )}
@@ -545,7 +521,7 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({ currentPath, onPathChan
 
                   {/* No directories found */}
                   {parentDirectories.length === 0 && childDirectories.length === 0 && (
-                    <div className="px-3 py-4 text-center text-gray-500 text-sm italic">
+                    <div className="px-3 py-4 text-center text-terminal-muted text-sm italic">
                       No accessible directories found
                     </div>
                   )}
@@ -557,13 +533,13 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({ currentPath, onPathChan
 
         {/* Programming Language Info */}
         {languageInfo && (
-          <div className="flex items-center gap-2 px-2 py-1 bg-blue-900/20 border border-blue-700/30 rounded">
+          <div className="hidden min-w-0 items-center gap-2 rounded-md border border-blue-500/20 bg-blue-500/10 px-2 py-1 lg:flex">
             <div className="flex items-center gap-2">
               {languageInfo.icon}
               <span className="font-medium text-blue-300">
                 {languageInfo.name}
               </span>
-              <span className="text-xs text-gray-400">
+              <span className="font-mono text-xs text-terminal-muted">
                 {formatVersion(languageInfo.version)}
               </span>
             </div>

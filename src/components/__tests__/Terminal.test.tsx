@@ -37,13 +37,10 @@ describe('Terminal Component', () => {
     });
   });
 
-  test('integrates with Tauri backend', async () => {
+  test('does not call the backend without an active session', () => {
     render(<Terminal />);
-    
-    // Should make calls to Tauri backend
-    await waitFor(() => {
-      expect(invoke).toHaveBeenCalled();
-    }, { timeout: 3000 });
+
+    expect(invoke).not.toHaveBeenCalled();
   });
 
   test('handles component lifecycle', () => {
@@ -102,5 +99,4 @@ describe('Terminal Component', () => {
       expect(document.body.firstElementChild).toBeTruthy();
     });
   });
-});
 });

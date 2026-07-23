@@ -36,6 +36,10 @@ Object.assign(navigator, {
   disconnect: vi.fn(),
 }));
 
+// xterm feature-detects canvas at module load. jsdom logs a noisy
+// "not implemented" error unless the probe is explicitly represented.
+HTMLCanvasElement.prototype.getContext = vi.fn(() => null) as typeof HTMLCanvasElement.prototype.getContext;
+
 // Mock scrollIntoView
 Element.prototype.scrollIntoView = vi.fn();
 
