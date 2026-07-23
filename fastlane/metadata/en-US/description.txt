@@ -1,0 +1,32 @@
+pH7Console is a fast, privacy-first terminal for macOS with a real persistent shell and a coder model that runs entirely on your Mac. Use zsh, bash, Fish, SSH, full-screen TUI apps, and ordinary developer tools while keeping terminal context away from remote AI services.
+
+PRIVATE BY DESIGN
+• No account, telemetry, ads, or remote AI
+• Bundled Qwen2.5-Coder inference and encrypted-history-backed adaptation stay on device
+• Command output is not saved to history by default
+• The Mac App Store sandbox restricts file access to folders you explicitly choose
+
+A REAL TERMINAL, NOT A COMMAND FORM
+• Persistent PTY sessions preserve shell state, jobs, aliases, and current directories
+• Smooth xterm rendering with true color, Unicode, links, search, selection, and 20,000-line scrollback
+• Responsive input, resize, Ctrl-C, and independent tabs under heavy output
+• One-click recovery restarts an exited shell in the same workspace
+
+ASK, REVIEW, THEN RUN
+Describe a task in plain English by typing or using optional push-to-talk voice input. Speech recognition is required to run on your Mac with no cloud fallback; audio is never stored by pH7Console. Your editable draft becomes a local command plan with an explanation and risk rating only when you choose. Suggestions are inserted for review and are never executed automatically.
+
+STAY IN FLOW
+• Multiple terminal sessions
+• Workspace-aware Git and runtime context
+• Local completion and contextual command suggestions
+• Optional on-device voice drafts with explicit start and stop controls
+• Local explanations and practical help for common errors
+• Cancellable local generation keeps you in control of compute
+• SQLCipher-encrypted searchable history with credential redaction
+• Integrated project explorer
+• Keyboard-first controls, deep links, and adjustable terminal appearance
+
+BUILT FOR DEVELOPERS
+The universal Mac app supports Apple silicon and Intel Macs. Shell integration is installed privately inside the app container and never edits your dotfiles.
+
+pH7Console executes commands through your login shell. Commands can change files or access networks depending on what you choose to run, so always review commands before executing them.

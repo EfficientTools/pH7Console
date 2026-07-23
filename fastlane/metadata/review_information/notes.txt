@@ -1,0 +1,16 @@
+pH7Console does not require an account, demo user, subscription, external hardware, or network connection.
+
+To review workspace features:
+1. Launch the app.
+2. Click “Open Workspace” at the lower left.
+3. Select any disposable test folder using the macOS folder picker.
+4. Enter a shell command in the center input, or enter a supported plain-English task in the local assistant panel.
+5. To test optional voice input, press “Voice” beside the planning field, grant Microphone and Speech Recognition access, speak a request, then press “Stop.” The transcript stays editable and no plan is created until “Create Safe Command Plan” is pressed.
+
+The Mac App Store build is intentionally sandboxed. Shell commands operate within macOS permissions and the workspace selected by the reviewer. The app contains no telemetry, advertising, remote AI service, or cloud account.
+
+Command assistance is provided on device by the bundled Qwen2.5-Coder GGUF model and a signed, sandbox-inheriting llama.cpp helper. The helper listens only on an authenticated ephemeral loopback port and is not exposed to the local network. If the model is still warming, deterministic local command patterns remain available and the real terminal stays interactive.
+
+Voice input uses Apple's Speech framework with on-device recognition required in code. It has no cloud fallback, starts only after an explicit button press, stops after at most 30 seconds, stores no audio, and never inserts into or executes in the shell.
+
+Searchable history stores heuristically redacted command text and execution metadata in a SQLCipher-encrypted database inside the app container. Its random 256-bit key is a device-only, non-synchronizing macOS data-protection Keychain item; FTS and WAL pages are encrypted. Command output is not persisted by default. Command-derived workflow adaptation remains in memory and is rebuilt from up to 500 encrypted history records on launch; Clear all removes both. If Keychain or database authentication fails, the app visibly falls back to memory-only history and performs no plaintext database writes.

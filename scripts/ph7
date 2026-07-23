@@ -1,0 +1,62 @@
+#!/bin/sh
+set -eu
+
+usage() {
+  printf '%s\n' \
+    'Usage: ph7 [DIRECTORY] [--command TEXT]' \
+    'Open a new pH7Console terminal. Commands are inserted for review and are never auto-executed.'
+}
+
+working_directory=$PWD
+command_text=
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    -c|--command)
+      if [ "$#" -lt 2 ]; then
+        printf '%s\n' 'ph7: --command requires a value' >&2
+        exit 2
+      fi
+      command_text=$2
+      shift 2
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      printf 'ph7: unknown option: %s\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      working_directory=$1
+      shift
+      ;;
+  esac
+done
+
+if [ ! -d "$working_directory" ]; then
+  printf 'ph7: not a directory: %s\n' "$working_directory" >&2
+  exit 2
+fi
+
+working_directory=$(cd -- "$working_directory" && pwd -P)
+
+base64url() {
+  printf '%s' "$1" \
+    | /usr/bin/base64 \
+    | /usr/bin/tr -d '\n\r=' \
+    | /usr/bin/tr '+/' '-_'
+}
+
+launch_url="ph7console://new?cwd64=$(base64url "$working_directory")"
+if [ -n "$command_text" ]; then
+  launch_url="$launch_url&command64=$(base64url "$command_text")"
+fi
+
+exec /usr/bin/open "$launch_url"

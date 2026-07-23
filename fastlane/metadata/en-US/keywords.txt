@@ -1,0 +1,1 @@
+terminal,shell,developer,local AI,offline,privacy,zsh,SSH,command,workflow,macOS

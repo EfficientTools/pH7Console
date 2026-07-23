@@ -1,0 +1,799 @@
+require "fileutils"
+require "json"
+require "uri"
+
+default_platform(:mac)
+
+BUNDLE_IDENTIFIER = "com.efficienttools.ph7console"
+APP_NAME = "pH7Console"
+
+def required_environment(name)
+  value = ENV[name]
+  UI.user_error!("Set #{name} before running this lane.") if value.nil? || value.empty?
+  value
+end
+
+def metadata_text(relative_path)
+  path = File.expand_path(File.join("metadata", relative_path), __dir__)
+  UI.user_error!("Missing metadata file: #{path}") unless File.file?(path)
+  value = File.read(path).strip
+  UI.user_error!("Metadata file is empty: #{path}") if value.empty?
+  value
+end
+
+def connect_api_key
+  app_store_connect_api_key(
+    key_id: required_environment("APPLE_API_KEY_ID"),
+    issuer_id: required_environment("APPLE_API_ISSUER"),
+    key_filepath: required_environment("APPLE_API_KEY_PATH"),
+    duration: 1_200,
+    in_house: false
+  )
+end
+
+def app_store_request_client
+  client = Spaceship::ConnectAPI.client
+  UI.user_error!("App Store Connect authentication is unavailable.") unless client
+  client.tunes_request_client
+end
+
+def upload_build_file_parts(path, upload_operations)
+  UI.user_error!("Apple returned no upload operations for #{File.basename(path)}.") if upload_operations.empty?
+
+  file = File.open(path, "rb")
+  begin
+    upload_operations.each_with_index do |operation, index|
+      offset = Integer(operation.fetch("offset"))
+      length = Integer(operation.fetch("length"))
+      method = operation.fetch("method").downcase.to_sym
+      headers = operation.fetch("requestHeaders", []).to_h do |header|
+        [header.fetch("name"), header.fetch("value")]
+      end
+
+      file.seek(offset)
+      bytes = file.read(length)
+      if bytes.nil? || bytes.bytesize != length
+        UI.user_error!(
+          "Could not read upload part #{index + 1}: expected #{length} bytes at offset #{offset}."
+        )
+      end
+
+      UI.message(
+        "Uploading build part #{index + 1}/#{upload_operations.length} " \
+        "(#{((offset + length) * 100.0 / File.size(path)).floor}%)"
+      )
+      Spaceship::ConnectAPI::FileUploader.with_retry do
+        Spaceship::ConnectAPI::FileUploader.client.send(
+          method,
+          operation.fetch("url"),
+          bytes,
+          headers
+        )
+      end
+    end
+  ensure
+    file.close
+  end
+end
+
+def build_upload_failure_summary(attributes)
+  delivery_state = attributes["state"]
+  state = delivery_state.is_a?(Hash) ? delivery_state["state"] : delivery_state
+  state ||= "UNKNOWN"
+  errors = if delivery_state.is_a?(Hash)
+             delivery_state["errors"]
+           else
+             attributes["errors"] || attributes.dig("assetDeliveryState", "errors")
+           end
+  errors ||= []
+  messages = errors.filter_map do |error|
+    [error["code"], error["description"] || error["detail"] || error["title"]]
+      .compact
+      .join(" - ")
+  end
+  ([state] + messages).join(": ")
+end
+
+def wait_for_build_upload(client, upload_id)
+  timeout_seconds = Integer(ENV.fetch("APP_BUILD_UPLOAD_TIMEOUT", "2700"))
+  deadline = Time.now + timeout_seconds
+  last_state = nil
+
+  loop do
+    response = client.get("v1/buildUploads/#{upload_id}")
+    attributes = response.body.fetch("data").fetch("attributes")
+    delivery_state = attributes.fetch("state")
+    state = delivery_state.is_a?(Hash) ? delivery_state.fetch("state") : delivery_state
+    UI.message("Apple build-upload state: #{state}") if state != last_state
+
+    return if state == "COMPLETE"
+    if state == "FAILED"
+      UI.user_error!("Apple rejected the build upload: #{build_upload_failure_summary(attributes)}")
+    end
+    UI.user_error!("Timed out waiting for Apple to process the build upload.") if Time.now >= deadline
+
+    last_state = state
+    sleep(15)
+  end
+end
+
+def permanent_free_price?(app_id)
+  client = app_store_request_client
+  response = client.get(
+    "v1/appPriceSchedules/#{app_id}/manualPrices",
+    client.build_params(
+      includes: "appPricePoint,territory",
+      fields: {
+        appPricePoints: "customerPrice",
+        appPrices: "startDate,endDate,appPricePoint,territory"
+      },
+      limit: 200
+    )
+  )
+  price_points = response.body.fetch("included", []).filter_map do |resource|
+    next unless resource["type"] == "appPricePoints"
+    [resource["id"], resource.dig("attributes", "customerPrice")]
+  end.to_h
+  response.body.fetch("data", []).any? do |price|
+    point_id = price.dig("relationships", "appPricePoint", "data", "id")
+    price.dig("attributes", "startDate").nil? &&
+      price.dig("attributes", "endDate").nil? &&
+      price_points[point_id].to_f.zero?
+  end
+rescue Spaceship::UnexpectedResponse
+  false
+end
+
+def free_price_point(app_id, territory)
+  client = app_store_request_client
+  response = client.get(
+    "v1/apps/#{app_id}/appPricePoints",
+    client.build_params(
+      filter: { territory: territory },
+      fields: { appPricePoints: "customerPrice,territory" },
+      limit: 200
+    )
+  )
+  loop do
+    free_point = response.body.fetch("data", []).find do |point|
+      point.dig("attributes", "customerPrice").to_f.zero?
+    end
+    return free_point if free_point
+    response = response.next_page
+    break unless response
+  end
+  nil
+end
+
+def ensure_bundle_identifier
+  bundle_id = Spaceship::ConnectAPI::BundleId.find(BUNDLE_IDENTIFIER)
+  return bundle_id if bundle_id
+
+  UI.message("Registering #{BUNDLE_IDENTIFIER} in the Apple Developer account")
+  Spaceship::ConnectAPI::BundleId.create(
+    name: "#{APP_NAME} macOS",
+    platform: Spaceship::ConnectAPI::BundleIdPlatform::MAC_OS,
+    identifier: BUNDLE_IDENTIFIER
+  )
+end
+
+def age_rating_attributes
+  require "json"
+  config_path = File.expand_path("metadata/app_rating_config.json", __dir__)
+  configured = JSON.parse(File.read(config_path))
+  attributes = configured.to_h do |key, value|
+    mapped_key = Spaceship::ConnectAPI::AgeRatingDeclaration.map_key_from_itc(key)
+    mapped_value = Spaceship::ConnectAPI::AgeRatingDeclaration.map_value_from_itc(mapped_key, value)
+    [mapped_key, mapped_value]
+  end
+  attributes, deprecation_messages, errors =
+    Spaceship::ConnectAPI::AgeRatingDeclaration.map_deprecation_if_possible(attributes)
+  deprecation_messages.each { |message| UI.deprecated(message) }
+  errors.each { |error| UI.error(error) }
+  UI.user_error!("The age-rating configuration contains unsupported values.") unless errors.empty?
+  attributes
+end
+
+platform :mac do
+  desc "Create the pH7Console bundle ID and App Store Connect record when missing"
+  lane :ensure_appstore_record do
+    connect_api_key
+    ensure_bundle_identifier
+
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    unless app
+      UI.user_error!("Create the #{APP_NAME} app record in App Store Connect, then run this lane again. Apple does not allow app-record creation through this API key.")
+    end
+
+    UI.success("The #{APP_NAME} bundle ID and App Store Connect record are ready")
+  end
+
+  desc "Upload a signed Mac App Store package using Apple's Build Upload API"
+  lane :upload_build_via_api do
+    connect_api_key
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+
+    package_path = File.expand_path(
+      ENV.fetch("APP_PACKAGE_PATH", "../dist/app-store/pH7Console.pkg"),
+      __dir__
+    )
+    UI.user_error!("Package not found: #{package_path}") unless File.file?(package_path)
+    UI.user_error!("Package is empty: #{package_path}") unless File.size(package_path).positive?
+
+    version = ENV.fetch("APP_VERSION", "1.0.0")
+    build_number = ENV.fetch("APP_BUILD_NUMBER", "4")
+    client = app_store_request_client
+    upload_id = nil
+
+    begin
+      upload_response = client.post(
+        "v1/buildUploads",
+        {
+          data: {
+            type: "buildUploads",
+            attributes: {
+              cfBundleShortVersionString: version,
+              cfBundleVersion: build_number,
+              platform: "MAC_OS"
+            },
+            relationships: {
+              app: {
+                data: { type: "apps", id: app.id }
+              }
+            }
+          }
+        }
+      )
+      upload_id = upload_response.body.fetch("data").fetch("id")
+
+      file_response = client.post(
+        "v1/buildUploadFiles",
+        {
+          data: {
+            type: "buildUploadFiles",
+            attributes: {
+              assetType: "ASSET",
+              fileName: File.basename(package_path),
+              fileSize: File.size(package_path),
+              uti: "com.apple.pkg"
+            },
+            relationships: {
+              buildUpload: {
+                data: { type: "buildUploads", id: upload_id }
+              }
+            }
+          }
+        }
+      )
+      file_data = file_response.body.fetch("data")
+      file_id = file_data.fetch("id")
+      upload_operations = file_data.fetch("attributes").fetch("uploadOperations")
+
+      UI.message(
+        "Apple reserved #{upload_operations.length} upload parts for " \
+        "#{File.basename(package_path)} (#{File.size(package_path)} bytes)"
+      )
+      upload_build_file_parts(package_path, upload_operations)
+
+      client.patch(
+        "v1/buildUploadFiles/#{file_id}",
+        {
+          data: {
+            type: "buildUploadFiles",
+            id: file_id,
+            attributes: { uploaded: true }
+          }
+        }
+      )
+      wait_for_build_upload(client, upload_id)
+      UI.success("Build #{build_number} upload completed through App Store Connect")
+    rescue => error
+      if upload_id
+        begin
+          client.delete("v1/buildUploads/#{upload_id}")
+        rescue
+          UI.important("Apple retained the failed build-upload record for diagnostics.")
+        end
+      end
+      raise error
+    end
+  end
+
+  desc "Wait for Apple's newest pH7Console build upload to finish processing"
+  lane :wait_for_build_upload_processing do
+    connect_api_key
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+
+    version = ENV.fetch("APP_VERSION", "1.0.0")
+    build_number = ENV.fetch("APP_BUILD_NUMBER", "4")
+    client = app_store_request_client
+    response = client.get(
+      "v1/apps/#{app.id}/buildUploads",
+      client.build_params(
+        filter: {
+          cfBundleShortVersionString: version,
+          cfBundleVersion: build_number
+        },
+        limit: 1
+      )
+    )
+    upload = response.body.fetch("data", []).first
+    UI.user_error!("Build upload #{version} (#{build_number}) was not found.") unless upload
+
+    wait_for_build_upload(client, upload.fetch("id"))
+    UI.success("Build upload #{version} (#{build_number}) completed")
+  end
+
+  desc "Verify that the expected pH7Console 1.0.0 build reached App Store Connect"
+  lane :verify_uploaded_build do
+    connect_api_key
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+
+    build_number = ENV.fetch("APP_BUILD_NUMBER", "4")
+
+    builds = Spaceship::ConnectAPI::Build.all(
+      app_id: app.id,
+      version: "1.0.0",
+      build_number: build_number,
+      platform: Spaceship::ConnectAPI::Platform::MAC_OS
+    )
+    UI.user_error!("Build #{build_number} has not reached App Store Connect yet.") if builds.empty?
+
+    build = builds.first
+    if [
+      Spaceship::ConnectAPI::Build::ProcessingState::FAILED,
+      Spaceship::ConnectAPI::Build::ProcessingState::INVALID
+    ].include?(build.processing_state)
+      UI.user_error!("Build #{build_number} was rejected during processing: #{build.processing_state}")
+    end
+
+    UI.success("Build #{build_number} is present in App Store Connect with state #{build.processing_state}")
+  end
+
+  desc "Select the validated App Store build for version 1.0.0"
+  lane :select_uploaded_build do
+    connect_api_key
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+    version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::MAC_OS)
+    UI.user_error!("Version 1.0.0 was not found.") unless version&.version_string == "1.0.0"
+    build_number = ENV.fetch("APP_BUILD_NUMBER", "4")
+    builds = Spaceship::ConnectAPI::Build.all(
+      app_id: app.id,
+      version: "1.0.0",
+      build_number: build_number,
+      platform: Spaceship::ConnectAPI::Platform::MAC_OS
+    )
+    UI.user_error!("Validated build #{build_number} was not found.") if builds.empty?
+    build = builds.first
+    UI.user_error!("Build #{build_number} is #{build.processing_state}, not VALID.") unless build.processing_state == Spaceship::ConnectAPI::Build::ProcessingState::VALID
+    selected = begin
+      version.get_build
+    rescue
+      nil
+    end
+    if selected&.id == build.id
+      UI.success("Build #{build_number} is already selected")
+    else
+      version.select_build(build_id: build.id)
+      UI.success("Build #{build_number} selected for version 1.0.0")
+    end
+  end
+
+  desc "Report submission-readiness fields without exposing contact values"
+  lane :audit_submission_readiness do
+    connect_api_key
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+    version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::MAC_OS)
+    UI.user_error!("Version 1.0.0 was not found.") unless version&.version_string == "1.0.0"
+    app_info = app.fetch_edit_app_info
+    UI.user_error!("The editable #{APP_NAME} app information was not found.") unless app_info
+
+    selected_build = begin
+      version.get_build
+    rescue
+      nil
+    end
+    review = begin
+      version.fetch_app_store_review_detail
+    rescue
+      nil
+    end
+    submission = begin
+      version.fetch_app_store_version_submission
+    rescue
+      nil
+    end
+    privacy_localization = app_info.get_app_info_localizations.find { |item| item.locale == "en-US" }
+    privacy_api_available = true
+    usages = begin
+      Spaceship::ConnectAPI::AppDataUsage.all(
+        app_id: app.id,
+        includes: "category,grouping,purpose,dataProtection",
+        limit: 500
+      )
+    rescue
+      privacy_api_available = false
+      []
+    end
+    privacy_publish_state = if privacy_api_available
+      Spaceship::ConnectAPI::AppDataUsagesPublishState.get(app_id: app.id)
+    end
+    availability = begin
+      app.get_app_availabilities(includes: nil, limit: nil)
+    rescue
+      nil
+    end
+    free_price_configured = permanent_free_price?(app.id)
+
+    readiness = {
+      version_state: version.app_version_state,
+      release_type: version.release_type,
+      selected_build: selected_build&.version,
+      submission_created: !submission.nil?,
+      content_rights: app.content_rights_declaration,
+      content_rights_complete: app.content_rights_declaration == Spaceship::ConnectAPI::App::ContentRightsDeclaration::USES_THIRD_PARTY_CONTENT,
+      review_contact: {
+        first_name: !review&.contact_first_name.to_s.empty?,
+        last_name: !review&.contact_last_name.to_s.empty?,
+        email: !review&.contact_email.to_s.empty?,
+        phone: !review&.contact_phone.to_s.empty?,
+        notes: !review&.notes.to_s.empty?
+      },
+      privacy_policy_url_present: !privacy_localization&.privacy_policy_url.to_s.empty?,
+      privacy_api_available: privacy_api_available,
+      privacy_usage_count: usages.length,
+      privacy_not_collected: usages.length == 1 && usages.first.is_not_collected?,
+      privacy_published: privacy_publish_state&.published == true,
+      availability_created: !availability.nil?,
+      permanent_free_price: free_price_configured
+    }
+    UI.message(JSON.pretty_generate(readiness))
+  end
+
+  desc "Set and verify Content Rights for the bundled Qwen and llama.cpp components"
+  lane :upload_content_rights do
+    connect_api_key
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+    declaration = Spaceship::ConnectAPI::App::ContentRightsDeclaration::USES_THIRD_PARTY_CONTENT
+    app.update(attributes: { contentRightsDeclaration: declaration })
+    refreshed = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    unless refreshed&.content_rights_declaration == declaration
+      UI.user_error!("App Store Connect did not retain the Content Rights declaration.")
+    end
+    UI.success("Content Rights is set to use third-party content")
+  end
+
+  desc "Upload the English Mac App Store listing and screenshots without submitting for review"
+  lane :upload_store_listing do
+    api_key = connect_api_key
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+    app.update(attributes: {
+      contentRightsDeclaration: Spaceship::ConnectAPI::App::ContentRightsDeclaration::USES_THIRD_PARTY_CONTENT
+    })
+    deliver(
+      api_key: api_key,
+      app_identifier: BUNDLE_IDENTIFIER,
+      app_version: "1.0.0",
+      platform: "osx",
+      metadata_path: File.expand_path("metadata", __dir__),
+      screenshots_path: File.expand_path("screenshots", __dir__),
+      app_rating_config_path: File.expand_path("metadata/app_rating_config.json", __dir__),
+      skip_binary_upload: true,
+      skip_metadata: false,
+      skip_screenshots: false,
+      overwrite_screenshots: true,
+      submit_for_review: false,
+      force: true,
+      run_precheck_before_submit: false,
+      precheck_include_in_app_purchases: false
+    )
+    UI.success("Store listing and screenshots uploaded; the app has not been submitted for review")
+  end
+
+  desc "Upload Mac App Store screenshots independently of review contact metadata"
+  lane :upload_store_screenshots do
+    api_key = connect_api_key
+    deliver(
+      api_key: api_key,
+      app_identifier: BUNDLE_IDENTIFIER,
+      app_version: "1.0.0",
+      platform: "osx",
+      screenshots_path: File.expand_path("screenshots", __dir__),
+      skip_binary_upload: true,
+      skip_metadata: true,
+      skip_screenshots: false,
+      overwrite_screenshots: true,
+      submit_for_review: false,
+      force: true,
+      run_precheck_before_submit: false
+    )
+    UI.success("Store screenshots uploaded; the app has not been submitted for review")
+  end
+
+  desc "Upload the age-rating declaration without requiring review-contact metadata"
+  lane :upload_store_age_rating do
+    connect_api_key
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+    app_info = app.fetch_edit_app_info
+    UI.user_error!("The editable #{APP_NAME} app information was not found.") unless app_info
+    declaration = app_info.fetch_age_rating_declaration
+    UI.user_error!("The #{APP_NAME} age-rating declaration was not found.") unless declaration
+    declaration.update(attributes: age_rating_attributes)
+    UI.success("Age-rating declaration uploaded")
+  end
+
+  desc "Upload App Review contact and notes after a phone number is supplied"
+  lane :upload_review_information do
+    connect_api_key
+    phone = required_environment("APP_REVIEW_PHONE").strip
+    unless phone.match?(/\A\+[0-9][0-9 ()-]{5,24}\z/)
+      UI.user_error!("APP_REVIEW_PHONE must start with + and a country code.")
+    end
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+    version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::MAC_OS)
+    UI.user_error!("Version 1.0.0 was not found.") unless version&.version_string == "1.0.0"
+    attributes = {
+      contact_first_name: metadata_text("review_information/first_name.txt"),
+      contact_last_name: metadata_text("review_information/last_name.txt"),
+      contact_phone: phone,
+      contact_email: metadata_text("review_information/email_address.txt"),
+      demo_account_required: false,
+      notes: metadata_text("review_information/notes.txt")
+    }
+    review = begin
+      version.fetch_app_store_review_detail
+    rescue
+      nil
+    end
+    if review
+      review.update(attributes: attributes)
+    else
+      version.create_app_store_review_detail(attributes: attributes)
+    end
+    UI.success("App Review contact and notes uploaded")
+  end
+
+  desc "Upload the public privacy-policy URL after it is published"
+  lane :upload_privacy_policy_url do
+    connect_api_key
+    privacy_url = required_environment("APP_PRIVACY_POLICY_URL").strip
+    parsed = URI.parse(privacy_url)
+    unless parsed.is_a?(URI::HTTPS) && parsed.host && !parsed.host.empty?
+      UI.user_error!("APP_PRIVACY_POLICY_URL must be a public HTTPS URL.")
+    end
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+    app_info = app.fetch_edit_app_info
+    UI.user_error!("The editable #{APP_NAME} app information was not found.") unless app_info
+    localization = app_info.get_app_info_localizations.find { |item| item.locale == "en-US" }
+    UI.user_error!("The en-US app information localization was not found.") unless localization
+    localization.update(attributes: { privacy_policy_url: privacy_url })
+    UI.success("Privacy-policy URL uploaded")
+  rescue URI::InvalidURIError
+    UI.user_error!("APP_PRIVACY_POLICY_URL is not a valid URL.")
+  end
+
+  desc "Set pH7Console to a permanent Free price in every App Store territory"
+  lane :set_free_pricing do
+    connect_api_key
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+    if permanent_free_price?(app.id)
+      UI.success("pH7Console already has a permanent Free price")
+      next
+    end
+
+    base_territory = ENV.fetch("APP_PRICE_BASE_TERRITORY", "AUS").strip.upcase
+    unless base_territory.match?(/\A[A-Z]{3}\z/)
+      UI.user_error!("APP_PRICE_BASE_TERRITORY must be a three-letter App Store territory code.")
+    end
+    point = free_price_point(app.id, base_territory)
+    UI.user_error!("Apple returned no Free price point for #{base_territory}.") unless point
+
+    temporary_price_id = "${newprice-0}"
+    body = {
+      data: {
+        type: "appPriceSchedules",
+        relationships: {
+          app: {
+            data: { type: "apps", id: app.id }
+          },
+          baseTerritory: {
+            data: { type: "territories", id: base_territory }
+          },
+          manualPrices: {
+            data: [{ type: "appPrices", id: temporary_price_id }]
+          }
+        }
+      },
+      included: [
+        {
+          type: "appPrices",
+          id: temporary_price_id,
+          attributes: { startDate: nil },
+          relationships: {
+            appPricePoint: {
+              data: { type: "appPricePoints", id: point["id"] }
+            }
+          }
+        }
+      ]
+    }
+    app_store_request_client.post("v1/appPriceSchedules", body)
+    UI.user_error!("App Store Connect did not retain the permanent Free price.") unless permanent_free_price?(app.id)
+    UI.success("pH7Console is Free and available in every App Store territory")
+  end
+
+  desc "Verify all gates and submit the selected macOS build for App Review"
+  lane :submit_for_review do
+    api_key = connect_api_key
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+    version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::MAC_OS)
+    UI.user_error!("Version 1.0.0 was not found.") unless version&.version_string == "1.0.0"
+    build = begin
+      version.get_build
+    rescue
+      nil
+    end
+    UI.user_error!("No build is selected for version 1.0.0.") unless build
+    unless build.processing_state == Spaceship::ConnectAPI::Build::ProcessingState::VALID
+      UI.user_error!("Selected build #{build.version} is #{build.processing_state}, not VALID.")
+    end
+
+    review = begin
+      version.fetch_app_store_review_detail
+    rescue
+      nil
+    end
+    contact_complete = review &&
+      !review.contact_first_name.to_s.empty? &&
+      !review.contact_last_name.to_s.empty? &&
+      !review.contact_email.to_s.empty? &&
+      !review.contact_phone.to_s.empty? &&
+      !review.notes.to_s.empty?
+    UI.user_error!("App Review contact information is incomplete.") unless contact_complete
+
+    app_info = app.fetch_edit_app_info
+    localization = app_info&.get_app_info_localizations&.find { |item| item.locale == "en-US" }
+    UI.user_error!("The public privacy-policy URL is missing.") if localization&.privacy_policy_url.to_s.empty?
+    UI.user_error!("The permanent Free price is not configured.") unless permanent_free_price?(app.id)
+
+    deliver(
+      api_key: api_key,
+      app_identifier: BUNDLE_IDENTIFIER,
+      app_version: "1.0.0",
+      platform: "osx",
+      skip_binary_upload: true,
+      skip_metadata: true,
+      skip_screenshots: true,
+      submit_for_review: true,
+      force: true,
+      run_precheck_before_submit: false,
+      precheck_include_in_app_purchases: false
+    )
+    UI.success("Version 1.0.0 build #{build.version} was submitted for App Review")
+  end
+
+  desc "Verify the accepted App Store text and Mac screenshot count"
+  lane :verify_store_listing do
+    connect_api_key
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+
+    version = app.get_edit_app_store_version(
+      platform: Spaceship::ConnectAPI::Platform::MAC_OS
+    )
+    UI.user_error!("Version 1.0.0 was not found.") unless version&.version_string == "1.0.0"
+
+    localization = version.get_app_store_version_localizations(
+      filter: { locale: "en-US" }
+    ).first
+    UI.user_error!("The en-US listing was not found.") unless localization
+    UI.user_error!("The App Store description is empty.") if localization.description.to_s.empty?
+
+    desktop_set = localization.get_app_screenshot_sets.find do |set|
+      set.screenshot_display_type == Spaceship::ConnectAPI::AppScreenshotSet::DisplayType::APP_DESKTOP
+    end
+    screenshot_count = desktop_set&.app_screenshots&.length.to_i
+    UI.user_error!("Expected 5 Mac screenshots, found #{screenshot_count}.") unless screenshot_count == 5
+
+    expected_names = Dir.glob(File.expand_path("screenshots/en-US/*.png", __dir__))
+                        .map { |path| File.basename(path) }
+                        .sort
+    actual_names = desktop_set.app_screenshots.map(&:file_name)
+    unless actual_names == expected_names
+      UI.user_error!(
+        "Mac screenshot order differs from the local release set: " \
+        "expected=#{expected_names.inspect}, actual=#{actual_names.inspect}"
+      )
+    end
+
+    UI.success("Version 1.0.0 has accepted English metadata and the ordered 5-image Mac screenshot set")
+  end
+
+  desc "Remove App Store screenshot duplicates caused by asynchronous upload retries"
+  lane :deduplicate_store_screenshots do
+    connect_api_key
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+    version = app.get_edit_app_store_version(
+      platform: Spaceship::ConnectAPI::Platform::MAC_OS
+    )
+    UI.user_error!("Version 1.0.0 was not found.") unless version&.version_string == "1.0.0"
+    localization = version.get_app_store_version_localizations(
+      filter: { locale: "en-US" }
+    ).first
+    UI.user_error!("The en-US listing was not found.") unless localization
+    desktop_set = localization.get_app_screenshot_sets.find do |set|
+      set.screenshot_display_type == Spaceship::ConnectAPI::AppScreenshotSet::DisplayType::APP_DESKTOP
+    end
+    UI.user_error!("The Mac screenshot set was not found.") unless desktop_set
+
+    desktop_set.app_screenshots.group_by(&:file_name).each_value do |screenshots|
+      screenshots.drop(1).each(&:delete!)
+    end
+
+    refreshed_set = Spaceship::ConnectAPI::AppScreenshotSet.get(
+      app_screenshot_set_id: desktop_set.id
+    )
+    ordered_ids = refreshed_set.app_screenshots.sort_by(&:file_name).map(&:id)
+    refreshed_set.reorder_screenshots(app_screenshot_ids: ordered_ids)
+    UI.success("Mac screenshot set contains #{ordered_ids.length} unique images")
+  end
+
+  desc "Create and install Mac App Store certificates and download the provisioning profile"
+  lane :prepare_signing do
+    api_key = connect_api_key
+    ensure_bundle_identifier
+    team_id = required_environment("APPLE_TEAM_ID")
+    output_path = File.expand_path("../.appstore/signing", __dir__)
+    FileUtils.mkdir_p(output_path)
+
+    begin
+      cert(
+        api_key: api_key,
+        team_id: team_id,
+        platform: "macos",
+        generate_apple_certs: true,
+        output_path: output_path
+      )
+      app_distribution_certificate_id = ENV["CER_CERTIFICATE_ID"]
+      UI.user_error!("Fastlane did not return the Apple Distribution certificate ID.") if app_distribution_certificate_id.nil? || app_distribution_certificate_id.empty?
+
+      cert(
+        api_key: api_key,
+        team_id: team_id,
+        type: "mac_installer_distribution",
+        output_path: output_path
+      )
+
+      sigh(
+        api_key: api_key,
+        team_id: team_id,
+        app_identifier: BUNDLE_IDENTIFIER,
+        platform: "macos",
+        developer_id: false,
+        force: true,
+        cert_id: app_distribution_certificate_id,
+        provisioning_name: "pH7Console Mac App Store",
+        filename: "pH7Console.mobileprovision",
+        output_path: output_path
+      )
+    ensure
+      Dir.glob(File.join(output_path, "*.p12")).each { |path| FileUtils.rm_f(path) }
+      Dir.glob(File.join(output_path, "*.certSigningRequest")).each { |path| FileUtils.rm_f(path) }
+    end
+
+    UI.success("Signing assets are installed; profile: #{File.join(output_path, "pH7Console.mobileprovision")}")
+  end
+end

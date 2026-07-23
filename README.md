@@ -1,12 +1,12 @@
-# pH7Console: AI-Powered Terminal
+# pH7Console: Private, Intelligent Command Console
 
-![pH7Console Logo](src-tauri/icons/icon.png "ML-first terminal alternative - AI-driven terminal")
+![pH7Console Logo](src-tauri/icons/icon.png "pH7Console private command console")
 
-A privacy-first terminal built with Tauri that runs AI models locally. No telemetry, no cloud, no data leaving your machine.
+A privacy-first macOS command console built with Tauri. Its bundled local model, natural-language command matching, contextual suggestions, and adaptive workflow intelligence run locally: there is no telemetry, cloud account, or remote AI service.
 
 ## Usage
 
-Type commands naturally — the AI translates them:
+Run normal shell commands, including quoted arguments, pipelines, and redirects, or describe common tasks naturally:
 
 ```
 "show me all large files"  →  find . -type f -size +100M -exec ls -lh {} \;
@@ -14,26 +14,25 @@ Type commands naturally — the AI translates them:
 "check git status and stage changes"  →  git status && git add .
 ```
 
-AI slash commands:
-- `/explain <command>` — explain what any command does
-- `/fix` — analyse the last error and suggest a fix
-- `/optimize` — suggest a more efficient alternative
+Choose a workspace with the system folder picker before working with project files. This explicit choice is required by the Mac App Store sandbox and keeps file access under your control.
 
 ## Features
 
-- **Natural Language Commands** — Type plain English; get shell commands
-- **Smart Completions** — Context-aware Tab suggestions
-- **Error Assistance** — AI automatically suggests fixes when commands fail
-- **Local LLM Processing** — All inference runs on your machine; nothing leaves it
-- **Pattern Learning** — Learns your workflows and adapts suggestions over time
-- **Multi-Session** — `Cmd+T` new session, `Cmd+W` close, `Cmd+1–9` switch
+- **Shell-compatible execution** — Supports pipelines, redirects, expansion, and quoted paths through your login shell
+- **Natural-language commands** — Translates supported plain-English requests into common shell operations
+- **Smart completions** — Offers contextual suggestions as you type
+- **Error assistance** — Turns common failures into practical next steps
+- **Private workflow adaptation** — Learns from redacted completions in memory and rebuilds adaptive state from encrypted local history on launch
+- **Multi-session workspace** — Keeps independent persistent shells and working directories in separate tabs
+- **Fast recovery** — Restarts an exited shell in the same workspace without sacrificing the existing tab until its replacement is ready
+- **Encrypted searchable history** — Stores bounded, redacted execution metadata in SQLCipher with its key protected by the macOS Keychain
+- **Accessible desktop layout** — Keyboard shortcuts, labelled controls, and collapsible side panels
 
 ## Requirements
 
-- **Rust** 1.70+ — [rustup.rs](https://rustup.rs/)
+- **Rust** 1.88+ — [rustup.rs](https://rustup.rs/)
 - **Node.js** 18+ — [nodejs.org](https://nodejs.org/)
-- **RAM** 4GB minimum (8GB recommended for AI models)
-- **Storage** ~5GB free (for models and dependencies)
+- **macOS** 13.3 or later for the supported desktop release
 
 ## Install & Run
 
@@ -41,7 +40,7 @@ AI slash commands:
 git clone https://github.com/EfficientTools/pH7Console.git
 cd pH7Console
 chmod +x setup.sh && ./setup.sh
-npm run tauri dev
+npm run tauri:dev
 ```
 
 ## Build
@@ -56,33 +55,31 @@ npm run tauri build -- --target universal-apple-darwin
 
 Build outputs land in `src-tauri/target/release/bundle/`.
 
+For a sandboxed, signed Mac App Store package, follow [APP_STORE_RELEASE.md](APP_STORE_RELEASE.md). The store build deliberately uses user-selected workspace access; an unrestricted terminal product should be distributed separately with Developer ID signing and notarization.
+
 ## Development
 
 ```bash
 npm run lint                   # TypeScript/React linting
 npm run type-check             # TypeScript type checking
-npm test                       # Frontend tests
-cd src-tauri && cargo test     # Rust backend tests
+npm run test:unit              # Frontend unit tests
+npm run test:integration       # Desktop UI checks in Chromium and WebKit
+npm run test:rust              # Rust backend tests
 cd src-tauri && cargo fmt      # Format Rust code
 cd src-tauri && cargo clippy   # Lint Rust code
-npm run test:e2e               # Integration tests
+npm run test:ci                # Full release-quality verification
 ```
 
-## Local AI Models
+## Local intelligence
 
-| Model | Size | RAM | Speed | Best for |
-|-------|------|-----|-------|----------|
-| Phi-3 Mini | 3.8 GB | 4–6 GB | 200–500 ms | Complex reasoning, code generation |
-| Llama 3.2 1B | 1.2 GB | 2–3 GB | 100–200 ms | General commands, explanations |
-| TinyLlama | 1.1 GB | 1.5–2 GB | 50–100 ms | Real-time completions |
-| CodeQwen | 1.5 GB | 2–4 GB | 150–300 ms | Programming tasks, code analysis |
+The current release bundles a compact Qwen2.5-Coder model and runs it through a verified loopback-only llama.cpp helper. The deterministic pattern engine remains available while the model warms, after cancellation, or if local inference is unavailable. Command-derived adaptive state remains in memory; on launch it is rebuilt from bounded, redacted execution metadata in the SQLCipher-encrypted history database. That database's random key is protected by the macOS Keychain. Clearing history also clears adaptive memory, and there is no cloud fallback.
 
 ## Tech Stack
 
 - **Frontend**: React 18 + TypeScript + Tailwind CSS
 - **Backend**: Rust + Tauri 2.0
-- **AI Runtime**: Candle (Rust-native ML framework)
-- **Terminal**: xterm.js + cross-platform PTY
+- **Local intelligence**: bundled Qwen inference, Rust pattern matching, contextual scoring, cancellable generation, and encrypted-history-backed workflow adaptation
+- **Command execution**: The user's login shell, scoped to the selected workspace in the App Store edition
 
 ## Author
 

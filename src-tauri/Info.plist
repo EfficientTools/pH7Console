@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>ITSAppUsesNonExemptEncryption</key>
+  <false/>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>pH7Console uses the microphone only when you press Voice to transcribe a command-planning request on this Mac. Audio is not stored.</string>
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>pH7Console uses on-device speech recognition only when you press Voice to draft a command-planning request. Audio is not stored or sent by pH7Console.</string>
+</dict>
+</plist>

@@ -1,0 +1,1 @@
+A real persistent terminal with private local AI: type or dictate a task on-device, inspect the risk-rated command plan, then choose what runs.
