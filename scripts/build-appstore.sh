@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TAURI_DIR="$ROOT_DIR/src-tauri"
 APP_IDENTIFIER="com.efficienttools.ph7console"
 HELPER_IDENTIFIER="com.efficienttools.ph7console.llama-server"
-MINIMUM_RELEASE_BUILD_NUMBER=4
+MINIMUM_RELEASE_BUILD_NUMBER=5
 EXPECTED_MINIMUM_SYSTEM_VERSION="13.3"
 EXPECTED_MODEL_SHA256="cc324af070c2ecbfd324a30884d2f951a7ff756aba85cb811a6ec436933bb046"
 EXPECTED_MODEL_SIZE="1117320768"
@@ -171,7 +171,7 @@ done
 : "${APPLE_SIGNING_IDENTITY:?Set APPLE_SIGNING_IDENTITY to your Apple Distribution certificate name.}"
 : "${APPLE_INSTALLER_SIGNING_IDENTITY:?Set APPLE_INSTALLER_SIGNING_IDENTITY to your Mac Installer Distribution certificate name.}"
 : "${APPLE_PROVISIONING_PROFILE:?Set APPLE_PROVISIONING_PROFILE to the Mac App Store Connect provisioning profile path.}"
-: "${APP_BUILD_NUMBER:?Set APP_BUILD_NUMBER explicitly (4 is the next available App Store build).}"
+: "${APP_BUILD_NUMBER:?Set APP_BUILD_NUMBER explicitly (5 is the next available App Store build).}"
 
 if [[ ! "$APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]]; then
   echo "APPLE_TEAM_ID must be the 10-character Apple Developer Team ID." >&2
@@ -184,7 +184,7 @@ if [[ ! "$APP_BUILD_NUMBER" =~ ^[1-9][0-9]{0,8}$ ]]; then
 fi
 
 if (( APP_BUILD_NUMBER < MINIMUM_RELEASE_BUILD_NUMBER )); then
-  fail "APP_BUILD_NUMBER must be at least $MINIMUM_RELEASE_BUILD_NUMBER; builds 1 through 3 have already been used."
+  fail "APP_BUILD_NUMBER must be at least $MINIMUM_RELEASE_BUILD_NUMBER; builds 1 through 4 have already been used."
 fi
 
 require_regular_file "$APPLE_PROVISIONING_PROFILE" "App Store provisioning profile"
@@ -319,9 +319,12 @@ fi
 PROFILE_PLIST="$(mktemp -t ph7console-profile)"
 SIGNED_ENTITLEMENTS="$(mktemp -t ph7console-entitlements)"
 SIGNED_HELPER_ENTITLEMENTS="$(mktemp -t ph7console-helper-entitlements)"
+EXPANDED_PACKAGE_PARENT="$(mktemp -d -t ph7console-package)"
+EXPANDED_PACKAGE="$EXPANDED_PACKAGE_PARENT/expanded"
 
 cleanup() {
   rm -f "$ENTITLEMENTS" "$EMBEDDED_PROFILE" "$GENERATED_CONFIG" "$PROFILE_PLIST" "$SIGNED_ENTITLEMENTS" "$SIGNED_HELPER_ENTITLEMENTS"
+  rm -rf "$EXPANDED_PACKAGE_PARENT"
 }
 trap cleanup EXIT
 
@@ -527,12 +530,14 @@ codesign --force \
   --identifier "$HELPER_IDENTIFIER" \
   --options runtime \
   --timestamp \
+  --generate-entitlement-der \
   --entitlements "$HELPER_ENTITLEMENTS" \
   "$HELPER_EXECUTABLE"
 codesign --force \
   --sign "$APPLE_SIGNING_IDENTITY" \
   --options runtime \
   --timestamp \
+  --generate-entitlement-der \
   --entitlements "$ENTITLEMENTS" \
   "$APP_PATH"
 
@@ -643,4 +648,52 @@ xcrun productbuild \
 
 require_regular_file "$PKG_PATH" "App Store installer package"
 pkgutil --check-signature "$PKG_PATH"
+
+# Validate the exact payload that will be uploaded, not only the source bundle.
+# This catches packaging or post-sign mutations that can otherwise leave the
+# App Store with an app whose buttons cannot reach their native commands.
+pkgutil --expand-full "$PKG_PATH" "$EXPANDED_PACKAGE"
+PACKAGED_APP_COUNT="$(find "$EXPANDED_PACKAGE" -type d -name 'pH7Console.app' -prune -print | wc -l | tr -d '[:space:]')"
+[[ "$PACKAGED_APP_COUNT" == "1" ]] ||
+  fail "Installer must contain exactly one pH7Console.app; found $PACKAGED_APP_COUNT."
+PACKAGED_APP="$(find "$EXPANDED_PACKAGE" -type d -name 'pH7Console.app' -prune -print -quit)"
+PACKAGED_APP_EXECUTABLE="$PACKAGED_APP/Contents/MacOS/ph7-console"
+PACKAGED_HELPER_EXECUTABLE="$PACKAGED_APP/Contents/MacOS/llama-server"
+PACKAGED_MODEL="$PACKAGED_APP/Contents/Resources/$MODEL_RESOURCE_RELATIVE"
+PACKAGED_INFO_PLIST="$PACKAGED_APP/Contents/Info.plist"
+
+codesign --verify --strict --verbose=2 "$PACKAGED_HELPER_EXECUTABLE"
+codesign --verify --deep --strict --verbose=2 "$PACKAGED_APP"
+codesign -d --xml --entitlements "$SIGNED_ENTITLEMENTS" "$PACKAGED_APP_EXECUTABLE" 2>/dev/null
+codesign -d --xml --entitlements "$SIGNED_HELPER_ENTITLEMENTS" "$PACKAGED_HELPER_EXECUTABLE" 2>/dev/null
+plutil -lint "$SIGNED_ENTITLEMENTS" "$SIGNED_HELPER_ENTITLEMENTS" "$PACKAGED_INFO_PLIST"
+
+PACKAGED_APP_KEYS="$(
+  plutil -convert json -o - "$SIGNED_ENTITLEMENTS" | jq -r 'keys[]' | LC_ALL=C sort
+)"
+PACKAGED_HELPER_KEYS="$(
+  plutil -convert json -o - "$SIGNED_HELPER_ENTITLEMENTS" | jq -r 'keys[]' | LC_ALL=C sort
+)"
+[[ "$PACKAGED_APP_KEYS" == "$EXPECTED_APP_ENTITLEMENT_KEYS" ]] ||
+  fail "Packaged application contains a missing, invalid, or unexpected entitlement."
+[[ "$PACKAGED_HELPER_KEYS" == "$EXPECTED_HELPER_KEYS" ]] ||
+  fail "Packaged llama-server helper contains a missing, invalid, or unexpected entitlement."
+[[ "$(entitlement_value 'com.apple.security.app-sandbox')" == "true" ]] ||
+  fail "Packaged application lost its App Sandbox entitlement."
+[[ "$(entitlement_value 'com.apple.security.network.server')" == "true" ]] ||
+  fail "Packaged application lost the loopback server entitlement required by local inference."
+[[ "$(helper_entitlement_value 'com.apple.security.app-sandbox')" == "true" && \
+   "$(helper_entitlement_value 'com.apple.security.inherit')" == "true" ]] ||
+  fail "Packaged llama-server helper no longer inherits the parent App Sandbox."
+
+[[ "$(sha256_file "$PACKAGED_APP_EXECUTABLE")" == "$(sha256_file "$APP_EXECUTABLE")" ]] ||
+  fail "Packaged application executable differs from the verified signed source."
+[[ "$(sha256_file "$PACKAGED_HELPER_EXECUTABLE")" == "$(sha256_file "$HELPER_EXECUTABLE")" ]] ||
+  fail "Packaged llama-server helper differs from the verified signed source."
+verify_exact_model "$PACKAGED_MODEL"
+[[ "$(sha256_file "$PACKAGED_MODEL")" == "$(sha256_file "$BUNDLED_MODEL")" ]] ||
+  fail "Packaged model differs from the verified bundled model."
+[[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$PACKAGED_INFO_PLIST")" == "$APP_BUILD_NUMBER" ]] ||
+  fail "Packaged application does not contain build $APP_BUILD_NUMBER."
+
 echo "App Store package ready: $PKG_PATH"

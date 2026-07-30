@@ -29,19 +29,19 @@ The App Store build merges `src-tauri/tauri.appstore.conf.json` into the base Ta
 - network client and server access; and
 - the application and Team identifiers required by the provisioning profile.
 
-The network entitlements allow commands the user runs, and an optional local loopback inference service, to use networking. They do not authorize telemetry or a cloud AI service. Their purpose must be explained in App Review notes.
+The client entitlement allows commands the user runs to initiate network connections. The server entitlement is required by the bundled, sandbox-inheriting `llama-server` helper, which accepts authenticated inference requests only from the parent app on `127.0.0.1` and an operating-system-selected ephemeral port. It never binds to a LAN or public interface. These entitlements do not authorize telemetry or a cloud AI service, and the loopback listener must remain explained in App Review notes and visible under Settings → Privacy.
 
 The store edition must be described as a workspace console, not as an unrestricted replacement for Terminal.app. Selecting a folder does not remove the App Sandbox, and some programs or child-process workflows can still fail when they expect access outside the granted scope. Access after relaunch must be tested; it must not be promised unless the release preserves and successfully restores the appropriate macOS authorization.
 
-The existing App Store script builds a universal arm64/x86_64 app, checks its provisioning profile, architecture, signature, privacy manifest, and sandbox entitlements, and signs a `.pkg`. It does not make the product review-ready by itself.
+The App Store script builds a universal arm64/x86_64 app, checks its provisioning profile, architecture, privacy manifest, pinned model, and sandbox entitlements, signs nested code inside-out with DER entitlements, signs a `.pkg`, then expands that exact package and revalidates its signatures, entitlements, executable hashes, model hash, and build number. It does not make the product review-ready by itself.
 
 Current App Store Connect state for version 1.0.0:
 
 - App record `6791753004` exists.
-- Build 2 was uploaded and processed as `VALID`.
+- Build 4 was rejected on July 30, 2026 under Guidelines 2.4.5(i), 2.1(a), and 4 for an unexplained server entitlement, unavailable controls, and clipped text.
 - English metadata and five macOS screenshots were accepted by App Store Connect.
-- A public privacy-policy URL, review phone number, App Privacy questionnaire, age rating, pricing/availability, and build selection are still required.
-- The current working-tree terminal, history, deep-link, and optional LLM changes are not proven to be part of build 2. The next upload must use a build number greater than 2 and repeat all validation.
+- The public privacy-policy URL, reviewer contact, App Privacy questionnaire, content-rights declaration, age rating, free pricing, and availability are complete.
+- The next upload must use build 5 or greater, validate the exact signed application extracted from the final installer, select that processed build, and address every rejection in the review notes before resubmission.
 
 ## Direct notarized edition
 
@@ -164,7 +164,7 @@ No edition should be published from a dirty working tree or solely because it bu
 
 ### Additional Mac App Store gates
 
-- Set `APP_BUILD_NUMBER` to a value greater than 2 and run `npm run tauri:build:appstore`.
+- Set `APP_BUILD_NUMBER` to 5 or greater and run `npm run tauri:build:appstore`.
 - Verify arm64 and x86_64 slices, the embedded provisioning profile, App Sandbox and Team/application identifiers, nested code signatures, and `PrivacyInfo.xcprivacy` in the final app.
 - Install the generated package and run representative TestFlight testing, including selected-folder access and relaunch behavior.
 - Confirm that every helper is bundled before signing and works within the same sandbox. Do not download or replace executable code after review.
