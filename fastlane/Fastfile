@@ -236,7 +236,7 @@ platform :mac do
     UI.user_error!("Package is empty: #{package_path}") unless File.size(package_path).positive?
 
     version = ENV.fetch("APP_VERSION", "1.0.0")
-    build_number = ENV.fetch("APP_BUILD_NUMBER", "4")
+    build_number = ENV.fetch("APP_BUILD_NUMBER")
     client = app_store_request_client
     upload_id = nil
 
@@ -321,7 +321,7 @@ platform :mac do
     UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
 
     version = ENV.fetch("APP_VERSION", "1.0.0")
-    build_number = ENV.fetch("APP_BUILD_NUMBER", "4")
+    build_number = ENV.fetch("APP_BUILD_NUMBER")
     client = app_store_request_client
     response = client.get(
       "v1/apps/#{app.id}/buildUploads",
@@ -346,7 +346,7 @@ platform :mac do
     app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
     UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
 
-    build_number = ENV.fetch("APP_BUILD_NUMBER", "4")
+    build_number = ENV.fetch("APP_BUILD_NUMBER")
 
     builds = Spaceship::ConnectAPI::Build.all(
       app_id: app.id,
@@ -374,7 +374,7 @@ platform :mac do
     UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
     version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::MAC_OS)
     UI.user_error!("Version 1.0.0 was not found.") unless version&.version_string == "1.0.0"
-    build_number = ENV.fetch("APP_BUILD_NUMBER", "4")
+    build_number = ENV.fetch("APP_BUILD_NUMBER")
     builds = Spaceship::ConnectAPI::Build.all(
       app_id: app.id,
       version: "1.0.0",
