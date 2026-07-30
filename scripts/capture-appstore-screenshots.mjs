@@ -42,7 +42,13 @@ await page.addInitScript(() => {
   const fixedNow = new Date('2026-07-18T00:00:00.000Z').getTime();
   localStorage.setItem('ph7console-settings', JSON.stringify({
     state: {
-      appearance: { fontSize: 14, fontFamily: 'ui-monospace' },
+      // Chromium's generic `ui-monospace` metrics differ from WebKit's and can
+      // exaggerate xterm cell spacing in deterministic marketing captures.
+      // Use the same native macOS fonts users can select in the app.
+      appearance: {
+        fontSize: 14,
+        fontFamily: 'SFMono-Regular, Menlo, Monaco, monospace',
+      },
       keyboard: {
         shortcuts: {
           newTerminal: '⌘T',
@@ -220,6 +226,15 @@ await page.addInitScript(() => {
             backend: 'llama.cpp (bundled)',
             models: ['Qwen2.5-Coder-1.5B-Instruct'],
             message: 'Verified loopback-only local LLM ready',
+          };
+        case 'get_voice_input_status':
+          return {
+            kind: 'status',
+            available: true,
+            onDeviceAvailable: true,
+            microphoneAuthorization: 'authorized',
+            speechAuthorization: 'authorized',
+            message: 'Ready for on-device voice input',
           };
         case 'create_terminal': {
           const title = String(args.title ?? `Terminal ${sessions.length + 1}`);
@@ -460,6 +475,9 @@ try {
   await page.getByText('find . -type f -size +100M -print', { exact: true }).waitFor();
   await page.getByText('low', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Insert command without executing' }).waitFor();
+  // Keep the plain-English request visible beside the completed local plan so
+  // the first store image communicates the input-to-command workflow at once.
+  await commandPrompt.fill('Show files larger than 100 MB in this workspace');
   await capture('01-private-local-assistance.png');
 
   await page.getByRole('button', { name: /^Build diagnostics,/ }).click();

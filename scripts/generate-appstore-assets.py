@@ -8,50 +8,55 @@ from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFo
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKGROUND = ROOT / "app-store/assets/store-background-v2.png"
+BACKGROUND = ROOT / "app-store/assets/store-background-v3.png"
 ICON = ROOT / "app-store/assets/AppIcon-1024.png"
 RAW = ROOT / "app-store/raw-screenshots"
 OUTPUT = ROOT / "app-store/screenshots"
 FASTLANE = ROOT / "fastlane/screenshots/en-US"
 SIZE = (2880, 1800)
-APP_SIZE = (2304, 1440)
-APP_POSITION = (288, 345)
+APP_MAX_SIZE = (2560, 1450)
+APP_TOP = 350
 
 CAPTURES = [
     (
         "01-private-local-assistance.png",
-        "YOUR SHELL. NOW WITH PRIVATE LOCAL AI.",
-        "Review a safe command plan, then insert it—nothing runs without you.",
-        "PRIVATE • LOCAL • IN CONTROL",
+        "ASK IN ENGLISH. GET THE COMMAND.",
+        "Private local AI builds a safe command plan you review before anything runs.",
+        "ON-DEVICE AI",
         "01-private-command-console.png",
+        (0, 65, 2880, 1685),
     ),
     (
         "02-local-error-fix.png",
-        "FIX THE ERROR. KEEP YOUR FLOW.",
-        "Private local guidance explains the next command while you stay in control.",
-        "LOCAL ERROR GUIDANCE",
+        "ERRORS EXPLAINED. FIXES READY.",
+        "Understand the failure, review the correction, and keep moving.",
+        "LOCAL ERROR RECOVERY",
         "02-local-error-guidance.png",
+        (510, 65, 2880, 1415),
     ),
     (
         "03-workspace-explorer.png",
-        "YOUR PROJECT. YOUR SHELL. ONE WORKSPACE.",
-        "Browse the folder you choose while a real PTY stays live.",
-        "WORKSPACE AWARE",
+        "ONE WORKSPACE. ZERO CONTEXT SWITCHING.",
+        "Your files, project context, live shell, and AI stay in one focused view.",
+        "PROJECT-AWARE",
         "03-private-workspace-explorer.png",
+        (0, 65, 2880, 1685),
     ),
     (
         "04-searchable-history.png",
-        "YOUR COMMAND HISTORY. FAST, PRIVATE, SEARCHABLE.",
-        "Search encrypted local records with exit status and timing—never command output.",
-        "ENCRYPTED LOCAL RECALL",
+        "FIND ANY COMMAND IN SECONDS.",
+        "Search encrypted local history with result and timing at a glance.",
+        "ENCRYPTED ON THIS MAC",
         "04-searchable-command-history.png",
+        (300, 205, 2580, 1480),
     ),
     (
         "05-privacy-settings.png",
-        "YOUR WORK STAYS ON YOUR MAC.",
-        "No account, no telemetry, no remote AI—and encrypted command history.",
+        "LOCAL AI. ZERO CLOUD REQUIRED.",
+        "No account. No telemetry. Your terminal context stays on your Mac.",
         "PRIVATE BY DESIGN",
         "05-private-by-design.png",
+        (420, 170, 2460, 1510),
     ),
 ]
 
@@ -103,87 +108,87 @@ def compose(
     subtitle: str,
     eyebrow: str,
     output_name: str,
+    crop_box: tuple[int, int, int, int],
     index: int,
 ) -> Path:
     background = Image.open(BACKGROUND).convert("RGB").resize(SIZE, Image.Resampling.LANCZOS)
-    background = ImageEnhance.Contrast(background).enhance(1.08)
-    background = ImageEnhance.Brightness(background).enhance(0.84)
+    background = ImageEnhance.Contrast(background).enhance(1.06)
+    background = ImageEnhance.Brightness(background).enhance(0.78)
 
-    # Retain the generated green/violet motion while reserving a calm,
+    # Preserve the restrained edge motion while reserving a calm,
     # high-contrast band for store copy and a readable product window.
     overlay = Image.new("RGBA", SIZE, (2, 5, 14, 0))
     overlay_draw = ImageDraw.Draw(overlay)
-    overlay_draw.rectangle((0, 0, SIZE[0], 338), fill=(2, 5, 14, 172))
-    overlay_draw.rectangle((0, 338, SIZE[0], SIZE[1]), fill=(2, 5, 14, 34))
+    overlay_draw.rectangle((0, 0, SIZE[0], 318), fill=(2, 5, 14, 184))
+    overlay_draw.rectangle((0, 318, SIZE[0], SIZE[1]), fill=(2, 5, 14, 42))
     background = Image.alpha_composite(background.convert("RGBA"), overlay)
     draw = ImageDraw.Draw(background)
 
-    icon = Image.open(ICON).convert("RGBA").resize((76, 76), Image.Resampling.LANCZOS)
-    icon_mask = rounded_mask(icon.size, 17)
+    icon = Image.open(ICON).convert("RGBA").resize((70, 70), Image.Resampling.LANCZOS)
+    icon_mask = rounded_mask(icon.size, 16)
     icon.putalpha(ImageChops.multiply(icon.getchannel("A"), icon_mask))
-    background.alpha_composite(icon, (150, 38))
+    background.alpha_composite(icon, (150, 35))
 
-    draw.text((248, 56), "pH7Console", font=font(34), fill=(225, 255, 234, 255))
-    draw.rounded_rectangle((468, 51, 698, 94), radius=21, fill=(35, 48, 69, 210))
-    draw.text((499, 59), "FOR macOS", font=font(22), fill=(184, 196, 218, 255))
+    draw.text((240, 53), "pH7Console", font=font(32), fill=(225, 255, 234, 255))
 
-    headline_font = fit_text(draw, headline, 2360, 86)
+    headline_font = fit_text(draw, headline, 2360, 92)
     draw.text(
-        (150, 123),
+        (150, 116),
         headline,
         font=headline_font,
         fill=(250, 252, 255, 255),
-        stroke_width=1,
-        stroke_fill=(250, 252, 255, 90),
     )
-    draw.text((153, 244), subtitle, font=font(36), fill=(201, 211, 231, 255))
+    draw.text((153, 245), subtitle, font=font(35), fill=(201, 211, 231, 255))
 
     eyebrow_font = font(20)
     eyebrow_bounds = draw.textbbox((0, 0), eyebrow, font=eyebrow_font)
     eyebrow_width = eyebrow_bounds[2] - eyebrow_bounds[0]
-    eyebrow_x = 2580 - eyebrow_width
+    eyebrow_x = 2670 - eyebrow_width
     draw.rounded_rectangle(
-        (eyebrow_x - 24, 53, 2718, 99),
+        (eyebrow_x - 26, 47, 2718, 97),
         radius=23,
-        fill=(103, 80, 225, 212),
-        outline=(146, 126, 255, 175),
+        fill=(31, 130, 94, 218),
+        outline=(81, 231, 167, 190),
         width=2,
     )
-    draw.text((eyebrow_x, 63), eyebrow, font=eyebrow_font, fill=(255, 255, 255, 255))
+    draw.text((eyebrow_x, 61), eyebrow, font=eyebrow_font, fill=(236, 255, 247, 255))
 
-    source = load_capture(source_name).resize(APP_SIZE, Image.Resampling.LANCZOS).convert("RGBA")
-    source.putalpha(rounded_mask(APP_SIZE, 30))
+    source = load_capture(source_name).crop(crop_box)
+    scale = min(APP_MAX_SIZE[0] / source.width, APP_MAX_SIZE[1] / source.height)
+    app_size = (round(source.width * scale), round(source.height * scale))
+    app_position = ((SIZE[0] - app_size[0]) // 2, APP_TOP)
+    source = source.resize(app_size, Image.Resampling.LANCZOS).convert("RGBA")
+    source.putalpha(rounded_mask(app_size, 32))
 
-    shadow = Image.new("RGBA", (APP_SIZE[0] + 160, APP_SIZE[1] + 120), (0, 0, 0, 0))
+    shadow = Image.new("RGBA", (app_size[0] + 180, app_size[1] + 130), (0, 0, 0, 0))
     shadow_draw = ImageDraw.Draw(shadow)
     shadow_draw.rounded_rectangle(
-        (80, 34, 80 + APP_SIZE[0], 34 + APP_SIZE[1]),
-        radius=38,
-        fill=(0, 0, 0, 232),
+        (90, 36, 90 + app_size[0], 36 + app_size[1]),
+        radius=42,
+        fill=(0, 0, 0, 238),
     )
-    shadow = shadow.filter(ImageFilter.GaussianBlur(46))
-    app_x, app_y = APP_POSITION
-    background.alpha_composite(shadow, (app_x - 80, app_y - 34))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(52))
+    app_x, app_y = app_position
+    background.alpha_composite(shadow, (app_x - 90, app_y - 36))
 
     # The edge separates the real app capture from every background variation.
-    edge = Image.new("RGBA", APP_SIZE, (0, 0, 0, 0))
+    edge = Image.new("RGBA", app_size, (0, 0, 0, 0))
     edge_draw = ImageDraw.Draw(edge)
     edge_draw.rounded_rectangle(
-        (1, 1, APP_SIZE[0] - 2, APP_SIZE[1] - 2),
-        radius=30,
-        outline=(129, 147, 185, 165),
+        (1, 1, app_size[0] - 2, app_size[1] - 2),
+        radius=32,
+        outline=(113, 150, 174, 178),
         width=3,
     )
-    background.alpha_composite(source, APP_POSITION)
-    background.alpha_composite(edge, APP_POSITION)
+    background.alpha_composite(source, app_position)
+    background.alpha_composite(edge, app_position)
 
-    # A restrained sequence marker makes ordering obvious without competing
-    # with the feature-specific badge.
+    # The sequence marker stays quiet while making gallery order intentional.
     sequence = f"0{index}"
-    draw.ellipse((2750, 45, 2822, 117), fill=(14, 20, 31, 224), outline=(99, 218, 151, 190), width=2)
-    sequence_bounds = draw.textbbox((0, 0), sequence, font=font(22))
+    draw.ellipse((2760, 120, 2824, 184), fill=(14, 20, 31, 224), outline=(99, 218, 151, 190), width=2)
+    sequence_bounds = draw.textbbox((0, 0), sequence, font=font(20))
     sequence_width = sequence_bounds[2] - sequence_bounds[0]
-    draw.text((2786 - sequence_width / 2, 67), sequence, font=font(22), fill=(226, 255, 235, 255))
+    draw.text((2792 - sequence_width / 2, 140), sequence, font=font(20), fill=(226, 255, 235, 255))
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
     output_path = OUTPUT / output_name
