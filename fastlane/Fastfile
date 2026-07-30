@@ -708,6 +708,66 @@ platform :mac do
     UI.success("pH7Console is Free and available in every App Store territory")
   end
 
+  desc "Withdraw a waiting macOS submission so locked listing assets can be updated"
+  lane :withdraw_from_review do
+    connect_api_key
+    app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
+    UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
+
+    platform = Spaceship::ConnectAPI::Platform::MAC_OS
+    submission_states = Spaceship::ConnectAPI::ReviewSubmission::ReviewSubmissionState
+    review_submissions = app.get_review_submissions(
+      includes: "items,appStoreVersionForReview",
+      limit: 50
+    )
+    waiting = review_submissions.find do |review_submission|
+      review_submission.platform == platform &&
+        review_submission.state == submission_states::WAITING_FOR_REVIEW
+    end
+    in_review = review_submissions.find do |review_submission|
+      review_submission.platform == platform &&
+        review_submission.state == submission_states::IN_REVIEW
+    end
+    if in_review
+      UI.user_error!(
+        "App Review is already evaluating submission #{in_review.id}; " \
+        "refusing to interrupt an active review."
+      )
+    end
+    unless waiting
+      UI.success("No waiting macOS review submission needs to be withdrawn")
+      next
+    end
+
+    waiting.cancel_submission
+    final_state = submission_states::CANCELING
+    36.times do
+      refreshed = Spaceship::ConnectAPI::ReviewSubmission.get(
+        review_submission_id: waiting.id,
+        includes: "items,appStoreVersionForReview"
+      )
+      final_state = refreshed&.state
+      break unless [
+        submission_states::WAITING_FOR_REVIEW,
+        submission_states::CANCELING
+      ].include?(final_state)
+      sleep(5)
+    end
+    if [
+      submission_states::WAITING_FOR_REVIEW,
+      submission_states::CANCELING
+    ].include?(final_state)
+      UI.user_error!(
+        "Submission #{waiting.id} did not finish withdrawing " \
+        "(state=#{final_state || 'UNKNOWN'})."
+      )
+    end
+    UI.success(
+      "Withdrew macOS review submission #{waiting.id} " \
+      "(state=#{final_state || 'UNKNOWN'})"
+    )
+  end
+
   desc "Verify all gates and submit the selected macOS build for App Review"
   lane :submit_for_review do
     connect_api_key
@@ -831,16 +891,34 @@ platform :mac do
       end
     end
 
-    draft = review_submissions.find do |review_submission|
+    ready_drafts = review_submissions.select do |review_submission|
       review_submission.platform == platform &&
         review_submission.state == submission_states::READY_FOR_REVIEW
     end
+    ready_draft_items = ready_drafts.to_h do |candidate|
+      [
+        candidate.id,
+        Spaceship::ConnectAPI::ReviewSubmissionItem.all(
+          review_submission_id: candidate.id,
+          includes: "appStoreVersion"
+        )
+      ]
+    end
+    draft = ready_drafts.find do |candidate|
+      ready_draft_items.fetch(candidate.id).any? do |item|
+        item.app_store_version&.id == version.id
+      end
+    end
+    draft ||= ready_drafts.find do |candidate|
+      ready_draft_items.fetch(candidate.id).empty?
+    end
     draft ||= app.create_review_submission(platform: platform)
 
-    items = Spaceship::ConnectAPI::ReviewSubmissionItem.all(
-      review_submission_id: draft.id,
-      includes: "appStoreVersion"
-    )
+    items = ready_draft_items[draft.id] ||
+      Spaceship::ConnectAPI::ReviewSubmissionItem.all(
+        review_submission_id: draft.id,
+        includes: "appStoreVersion"
+      )
     version_attached = items.any? do |item|
       item.app_store_version&.id == version.id
     end

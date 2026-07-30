@@ -19,6 +19,7 @@
     "appstore:upload-listing": "fastlane mac upload_store_listing",
     "appstore:upload-screenshots": "fastlane mac upload_store_screenshots",
     "appstore:verify-listing": "fastlane mac verify_store_listing",
+    "appstore:withdraw-review": "fastlane mac withdraw_from_review",
     "appstore:set-free": "fastlane mac set_free_pricing",
     "appstore:submit": "fastlane mac submit_for_review",
     "appstore:deduplicate-screenshots": "fastlane mac deduplicate_store_screenshots",
