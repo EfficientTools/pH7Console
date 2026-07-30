@@ -8,7 +8,7 @@ from PIL import Image, ImageChops, ImageDraw, ImageEnhance, ImageFilter, ImageFo
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BACKGROUND = ROOT / "app-store/assets/store-background-v3.png"
+BACKGROUND = ROOT / "app-store/assets/store-background-v4.png"
 ICON = ROOT / "app-store/assets/AppIcon-1024.png"
 RAW = ROOT / "app-store/raw-screenshots"
 OUTPUT = ROOT / "app-store/screenshots"
@@ -20,40 +20,40 @@ APP_TOP = 350
 CAPTURES = [
     (
         "01-private-local-assistance.png",
-        "ASK IN ENGLISH. GET THE COMMAND.",
-        "Private local AI builds a safe command plan you review before anything runs.",
+        "Ask naturally. Stay in control.",
+        "Private local AI turns intent into a risk-rated command plan. Nothing runs until you choose.",
         "ON-DEVICE AI",
         "01-private-command-console.png",
         (0, 65, 2880, 1685),
     ),
     (
         "02-local-error-fix.png",
-        "ERRORS EXPLAINED. FIXES READY.",
-        "Understand the failure, review the correction, and keep moving.",
+        "Fix errors without breaking flow.",
+        "See the failure, review a precise correction, and keep moving.",
         "LOCAL ERROR RECOVERY",
         "02-local-error-guidance.png",
         (510, 65, 2880, 1415),
     ),
     (
         "03-workspace-explorer.png",
-        "ONE WORKSPACE. ZERO CONTEXT SWITCHING.",
-        "Your files, project context, live shell, and AI stay in one focused view.",
+        "Your project, fully in context.",
+        "Files, Git context, a live shell, and private local AI share one focused workspace.",
         "PROJECT-AWARE",
         "03-private-workspace-explorer.png",
         (0, 65, 2880, 1685),
     ),
     (
         "04-searchable-history.png",
-        "FIND ANY COMMAND IN SECONDS.",
-        "Search encrypted local history with result and timing at a glance.",
+        "Find any command in seconds.",
+        "Search encrypted local history with status and timing at a glance.",
         "ENCRYPTED ON THIS MAC",
         "04-searchable-command-history.png",
         (300, 205, 2580, 1480),
     ),
     (
         "05-privacy-settings.png",
-        "LOCAL AI. ZERO CLOUD REQUIRED.",
-        "No account. No telemetry. Your terminal context stays on your Mac.",
+        "Local intelligence. Zero cloud.",
+        "No account. No telemetry. Your terminal context stays on this Mac.",
         "PRIVATE BY DESIGN",
         "05-private-by-design.png",
         (420, 170, 2460, 1510),

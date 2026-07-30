@@ -482,12 +482,18 @@ try {
 
   await page.getByRole('button', { name: /^Build diagnostics,/ }).click();
   await page.locator('#ph7-ai-panel').getByRole('button', { name: 'Clear', exact: true }).click();
+  await commandPrompt.fill('Diagnose or fix the last failed command');
   await page.getByRole('button', { name: 'Fix Error' }).click();
   await page.locator('#ph7-ai-panel').getByText('npm run build', { exact: true }).waitFor();
   await page.locator('#ph7-ai-panel').getByText('On-device model', { exact: true }).first().waitFor();
   await capture('02-local-error-fix.png');
 
   await page.getByRole('button', { name: /^Main workspace,/ }).click();
+  await page.locator('#ph7-ai-panel').getByRole('button', { name: 'Clear', exact: true }).click();
+  await commandPrompt.fill('Show files larger than 100 MB in this workspace');
+  await page.getByRole('button', { name: 'Create Safe Command Plan' }).click();
+  await page.getByText('find . -type f -size +100M -print', { exact: true }).waitFor();
+  await commandPrompt.fill('Show files larger than 100 MB in this workspace');
   await page.getByRole('tab', { name: 'Explorer' }).click();
   await page.getByText('README.md', { exact: true }).waitFor();
   await page.getByText('src', { exact: true }).click();
