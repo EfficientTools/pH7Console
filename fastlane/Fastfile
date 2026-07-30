@@ -590,13 +590,15 @@ platform :mac do
     UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
     version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::MAC_OS)
     UI.user_error!("Version 1.0.0 was not found.") unless version&.version_string == "1.0.0"
+    notes = metadata_text("review_information/notes.txt")
+    UI.user_error!("App Review notes exceed Apple's 4,000-character limit.") if notes.length > 4_000
     attributes = {
       contact_first_name: metadata_text("review_information/first_name.txt"),
       contact_last_name: metadata_text("review_information/last_name.txt"),
       contact_phone: phone,
       contact_email: metadata_text("review_information/email_address.txt"),
       demo_account_required: false,
-      notes: metadata_text("review_information/notes.txt")
+      notes: notes
     }
     review = begin
       version.fetch_app_store_review_detail
@@ -626,6 +628,7 @@ platform :mac do
     UI.user_error!("Create App Review contact information before uploading notes.") unless review
 
     notes = metadata_text("review_information/notes.txt")
+    UI.user_error!("App Review notes exceed Apple's 4,000-character limit.") if notes.length > 4_000
     review.update(attributes: { notes: notes })
     refreshed = version.fetch_app_store_review_detail
     unless refreshed&.notes.to_s.strip == notes
