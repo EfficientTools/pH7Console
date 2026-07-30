@@ -37,6 +37,20 @@ def app_store_request_client
   client.tunes_request_client
 end
 
+def resolve_review_submission_item(item_id)
+  encoded_item_id = URI.encode_www_form_component(item_id)
+  body = {
+    data: {
+      type: "reviewSubmissionItems",
+      id: item_id,
+      attributes: {
+        resolved: true
+      }
+    }
+  }
+  app_store_request_client.patch("v1/reviewSubmissionItems/#{encoded_item_id}", body)
+end
+
 def upload_build_file_parts(path, upload_operations)
   UI.user_error!("Apple returned no upload operations for #{File.basename(path)}.") if upload_operations.empty?
 
@@ -408,6 +422,14 @@ platform :mac do
     rescue
       nil
     end
+    review_submissions = begin
+      app.get_review_submissions(
+        includes: "items,appStoreVersionForReview",
+        limit: 50
+      )
+    rescue
+      []
+    end
     privacy_localization = app_info.get_app_info_localizations.find { |item| item.locale == "en-US" }
     privacy_api_available = true
     usages = begin
@@ -435,6 +457,30 @@ platform :mac do
       release_type: version.release_type,
       selected_build: selected_build&.version,
       submission_created: !submission.nil?,
+      review_submissions: review_submissions.map do |review_submission|
+        submission_items = begin
+          Spaceship::ConnectAPI::ReviewSubmissionItem.all(
+            review_submission_id: review_submission.id,
+            includes: "appStoreVersion"
+          )
+        rescue
+          []
+        end
+        {
+          id: review_submission.id,
+          platform: review_submission.platform,
+          state: review_submission.state,
+          submitted_date: review_submission.submitted_date,
+          items: submission_items.map do |item|
+            {
+              id: item.id,
+              state: item.state,
+              app_store_version_id: item.app_store_version&.id,
+              app_store_version_state: item.app_store_version&.app_version_state
+            }
+          end
+        }
+      end,
       content_rights: app.content_rights_declaration,
       content_rights_complete: app.content_rights_declaration == Spaceship::ConnectAPI::App::ContentRightsDeclaration::USES_THIRD_PARTY_CONTENT,
       review_contact: {
@@ -661,7 +707,7 @@ platform :mac do
 
   desc "Verify all gates and submit the selected macOS build for App Review"
   lane :submit_for_review do
-    api_key = connect_api_key
+    connect_api_key
     app = Spaceship::ConnectAPI::App.find(BUNDLE_IDENTIFIER)
     UI.user_error!("The #{APP_NAME} App Store Connect record was not found.") unless app
     version = app.get_edit_app_store_version(platform: Spaceship::ConnectAPI::Platform::MAC_OS)
@@ -697,20 +743,141 @@ platform :mac do
     UI.user_error!("The public privacy-policy URL is missing.") if localization&.privacy_policy_url.to_s.empty?
     UI.user_error!("The permanent Free price is not configured.") unless permanent_free_price?(app.id)
 
-    deliver(
-      api_key: api_key,
-      app_identifier: BUNDLE_IDENTIFIER,
-      app_version: "1.0.0",
-      platform: "osx",
-      skip_binary_upload: true,
-      skip_metadata: true,
-      skip_screenshots: true,
-      submit_for_review: true,
-      force: true,
-      run_precheck_before_submit: false,
-      precheck_include_in_app_purchases: false
+    platform = Spaceship::ConnectAPI::Platform::MAC_OS
+    submission_states = Spaceship::ConnectAPI::ReviewSubmission::ReviewSubmissionState
+    review_submissions = app.get_review_submissions(
+      includes: "items,appStoreVersionForReview",
+      limit: 50
     )
-    UI.success("Version 1.0.0 build #{build.version} was submitted for App Review")
+    in_progress_states = [
+      submission_states::WAITING_FOR_REVIEW,
+      submission_states::IN_REVIEW
+    ]
+    in_progress = review_submissions.find do |review_submission|
+      review_submission.platform == platform &&
+        in_progress_states.include?(review_submission.state)
+    end
+    if in_progress
+      UI.success(
+        "Version 1.0.0 build #{build.version} is already in App Review " \
+        "(#{in_progress.state})"
+      )
+      next
+    end
+
+    # Apple keeps the rejected app version attached to its UNRESOLVED_ISSUES
+    # submission. Resubmit that record after fixing its notes and metadata;
+    # creating a second item is rejected because the version is already owned.
+    unresolved = review_submissions.find do |review_submission|
+      review_submission.platform == platform &&
+        review_submission.state == submission_states::UNRESOLVED_ISSUES
+    end
+    if unresolved
+      unresolved_items = Spaceship::ConnectAPI::ReviewSubmissionItem.all(
+        review_submission_id: unresolved.id,
+        includes: "appStoreVersion"
+      )
+      unresolved_version_item = unresolved_items.find do |item|
+        item.app_store_version&.id == version.id
+      end
+      if unresolved_version_item
+        if unresolved_version_item.state == "REJECTED"
+          resolve_review_submission_item(unresolved_version_item.id)
+          UI.message("Marked the corrected App Store version as resolved")
+        end
+
+        resolved_submission = nil
+        resolved_item = nil
+        10.times do
+          resolved_submission = Spaceship::ConnectAPI::ReviewSubmission.get(
+            review_submission_id: unresolved.id,
+            includes: "items,appStoreVersionForReview"
+          )
+          resolved_items = Spaceship::ConnectAPI::ReviewSubmissionItem.all(
+            review_submission_id: unresolved.id,
+            includes: "appStoreVersion"
+          )
+          resolved_item = resolved_items.find do |item|
+            item.app_store_version&.id == version.id
+          end
+          break unless resolved_item&.state == "REJECTED"
+          sleep(2)
+        end
+        if resolved_item&.state == "REJECTED"
+          UI.user_error!("Apple did not mark the corrected App Store version as resolved.")
+        end
+
+        submitted = resolved_submission.submit_for_review
+        unless in_progress_states.include?(submitted&.state)
+          submitted = Spaceship::ConnectAPI::ReviewSubmission.get(
+            review_submission_id: unresolved.id,
+            includes: "items,appStoreVersionForReview"
+          )
+        end
+        unless in_progress_states.include?(submitted&.state)
+          UI.user_error!(
+            "Apple did not accept the corrected unresolved submission " \
+            "(state=#{submitted&.state || 'UNKNOWN'})."
+          )
+        end
+        UI.success(
+          "Version 1.0.0 build #{build.version} was resubmitted for App Review " \
+          "(#{submitted.state})"
+        )
+        next
+      end
+    end
+
+    draft = review_submissions.find do |review_submission|
+      review_submission.platform == platform &&
+        review_submission.state == submission_states::READY_FOR_REVIEW
+    end
+    draft ||= app.create_review_submission(platform: platform)
+
+    items = Spaceship::ConnectAPI::ReviewSubmissionItem.all(
+      review_submission_id: draft.id,
+      includes: "appStoreVersion"
+    )
+    version_attached = items.any? do |item|
+      item.app_store_version&.id == version.id
+    end
+    unless version_attached
+      draft.add_app_store_version_to_review_items(app_store_version_id: version.id)
+    end
+
+    ready_submission = nil
+    10.times do
+      ready_submission = Spaceship::ConnectAPI::ReviewSubmission.get(
+        review_submission_id: draft.id,
+        includes: "items,appStoreVersionForReview"
+      )
+      break if ready_submission&.state == submission_states::READY_FOR_REVIEW
+      sleep(2)
+    end
+    unless ready_submission&.state == submission_states::READY_FOR_REVIEW
+      UI.user_error!(
+        "Review submission #{draft.id} did not become READY_FOR_REVIEW " \
+        "(state=#{ready_submission&.state || 'UNKNOWN'})."
+      )
+    end
+
+    submitted = ready_submission.submit_for_review
+    unless in_progress_states.include?(submitted&.state)
+      submitted = Spaceship::ConnectAPI::ReviewSubmission.get(
+        review_submission_id: draft.id,
+        includes: "items,appStoreVersionForReview"
+      )
+    end
+    unless in_progress_states.include?(submitted&.state)
+      UI.user_error!(
+        "Apple did not accept the review submission " \
+        "(state=#{submitted&.state || 'UNKNOWN'})."
+      )
+    end
+    UI.success(
+      "Version 1.0.0 build #{build.version} was submitted for App Review " \
+      "(#{submitted.state})"
+    )
   end
 
   desc "Verify the accepted App Store text and Mac screenshot count"
