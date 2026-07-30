@@ -194,20 +194,20 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 backdrop-blur-sm sm:p-6">
       <div 
         ref={modalRef}
-        className="bg-terminal-bg border border-terminal-border rounded-xl shadow-2xl w-full max-w-4xl max-h-[80vh] flex flex-col overflow-hidden"
+        className="flex max-h-[calc(100vh-1.5rem)] min-h-0 w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-terminal-border bg-terminal-bg shadow-2xl sm:max-h-[80vh]"
         role="dialog"
         aria-modal="true"
         aria-labelledby="history-title"
       >
         {/* Header */}
-        <div className="flex items-center justify-between p-4 border-b border-terminal-border">
-          <div className="flex items-center space-x-3">
-            <History className="w-5 h-5 text-ai-primary" />
+        <div className="flex items-start justify-between gap-3 border-b border-terminal-border p-4">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+            <History className="h-5 w-5 flex-none text-ai-primary" />
             <h2 id="history-title" className="text-lg font-semibold text-terminal-text">Command History</h2>
-            <span className="text-sm text-terminal-muted">
+            <span className="break-words text-sm text-terminal-muted">
               {searchQuery.trim()
                 ? `(${isSearching ? 'Searching…' : `${filteredHistory.length} results`})`
                 : `(${commandHistory.length} recent commands)`}
@@ -228,7 +228,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
           <button
             type="button"
             onClick={onClose}
-            className="p-1 rounded hover:bg-terminal-border transition-colors"
+            className="flex-none rounded p-1 transition-colors hover:bg-terminal-border"
             aria-label="Close command history"
           >
             <X className="w-5 h-5 text-terminal-muted" />
@@ -279,8 +279,8 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                 >
                   <div className="p-4">
                     {/* Command and Status */}
-                    <div className="flex items-start justify-between mb-2">
-                      <div className="flex-1 mr-4">
+                    <div className="flex flex-col items-start gap-3 sm:flex-row sm:justify-between">
+                      <div className="min-w-0 flex-1 sm:mr-4">
                         <div className="flex items-center space-x-2 mb-1">
                           {execution.exit_code === 0 ? (
                             <CheckCircle className="w-4 h-4 text-green-400 flex-shrink-0" />
@@ -306,7 +306,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                       </div>
                       
                       {/* Metadata */}
-                      <div className="flex flex-col items-end space-y-1 text-xs text-terminal-muted">
+                      <div className="flex flex-none flex-row flex-wrap items-center gap-2 text-xs text-terminal-muted sm:flex-col sm:items-end sm:space-y-1">
                         <div className="flex items-center space-x-1">
                           <Clock className="w-3 h-3" />
                           <span>{formatTimestamp(execution.timestamp)}</span>
@@ -334,8 +334,8 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
 
         {/* Footer */}
         <div className="p-4 border-t border-terminal-border bg-terminal-bg/50">
-          <div className="flex items-center justify-between text-xs text-terminal-muted">
-            <div className="flex items-center space-x-4">
+          <div className="flex flex-col gap-3 text-xs text-terminal-muted sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
               <div className="flex items-center space-x-1">
                 <ArrowUp className="w-3 h-3" />
                 <ArrowDown className="w-3 h-3" />
@@ -350,7 +350,7 @@ export const HistoryModal: React.FC<HistoryModalProps> = ({
                 <span>Close</span>
               </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-end">
               <span>
                 {filteredHistory.length === 0 ? 0 : selectedIndex + 1} of {filteredHistory.length}
               </span>

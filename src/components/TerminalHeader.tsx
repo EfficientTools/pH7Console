@@ -382,7 +382,7 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({
 
   if (loading) {
     return (
-      <div className="h-11 shrink-0 bg-terminal-surface border-b border-terminal-border px-3 py-2 text-sm" aria-label="Loading workspace context">
+      <div className="h-11 shrink-0 overflow-hidden border-b border-terminal-border bg-terminal-surface px-3 py-2 text-sm" aria-label="Loading workspace context">
         <div className="flex items-center gap-4">
           <div className="w-48 h-4 bg-terminal-border rounded animate-pulse"></div>
         </div>
@@ -391,11 +391,11 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({
   }
 
   return (
-    <div className="h-11 shrink-0 bg-terminal-surface border-b border-terminal-border px-3 py-2 text-sm">
-      <div className="flex min-w-0 items-center gap-2 text-terminal-muted">
+    <div className="h-11 shrink-0 overflow-hidden border-b border-terminal-border bg-terminal-surface px-3 py-2 text-sm">
+      <div className="flex min-w-0 items-center gap-2 overflow-hidden text-terminal-muted">
         {/* Repository Section */}
         {repoInfo?.is_git_repo && (
-          <div className="flex min-w-0 items-center gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1">
+          <div className="hidden min-w-0 items-center gap-2 overflow-hidden rounded-md border border-emerald-500/20 bg-emerald-500/10 px-2 py-1 2xl:flex">
             <div className="flex min-w-0 items-center gap-2">
               <Package size={14} className="text-green-400" />
               <span className="max-w-40 truncate font-medium text-emerald-300">
@@ -428,10 +428,10 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({
         )}
 
         {/* Path Section */}
-        <div className="relative" ref={dropdownRef}>
+        <div className="relative min-w-0 flex-1" ref={dropdownRef}>
           <button
             type="button"
-            className="flex max-w-72 items-center gap-2 rounded-md border border-transparent bg-terminal-border/70 px-2 py-1 text-terminal-text transition-colors hover:border-terminal-muted/30 hover:bg-terminal-border focus:outline-none focus-visible:ring-2 focus-visible:ring-ai-primary"
+            className="flex max-w-full items-center gap-2 rounded-md border border-transparent bg-terminal-border/70 px-2 py-1 text-terminal-text transition-colors hover:border-terminal-muted/30 hover:bg-terminal-border focus:outline-none focus-visible:ring-2 focus-visible:ring-ai-primary"
             onClick={handlePathClick}
             aria-expanded={showPathDropdown}
             aria-haspopup="menu"
@@ -448,7 +448,7 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({
           {/* Directory Navigation Dropdown */}
           {showPathDropdown && (
             <div
-              className="absolute top-full left-0 z-50 mt-1 max-h-80 w-72 overflow-y-auto rounded-lg border border-terminal-border bg-terminal-surface py-1 shadow-2xl"
+              className="absolute left-0 top-full z-50 mt-1 max-h-80 w-[min(18rem,calc(100vw-1.5rem))] overflow-y-auto rounded-lg border border-terminal-border bg-terminal-surface py-1 shadow-2xl"
               role="menu"
               aria-label="Workspace navigation"
             >
@@ -533,7 +533,7 @@ const TerminalHeader: React.FC<TerminalHeaderProps> = ({
 
         {/* Programming Language Info */}
         {languageInfo && (
-          <div className="hidden min-w-0 items-center gap-2 rounded-md border border-blue-500/20 bg-blue-500/10 px-2 py-1 lg:flex">
+          <div className="hidden min-w-0 items-center gap-2 overflow-hidden rounded-md border border-blue-500/20 bg-blue-500/10 px-2 py-1 2xl:flex">
             <div className="flex items-center gap-2">
               {languageInfo.icon}
               <span className="font-medium text-blue-300">

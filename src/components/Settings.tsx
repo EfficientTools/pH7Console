@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Database, Keyboard, Palette, ShieldCheck, Trash2, X, Settings as SettingsIcon } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useClickOutside } from '../hooks/useClickOutside';
+import { useAIStore } from '../store/aiStore';
 import { useSettingsStore } from '../store/settingsStore';
 import { useTerminalStore } from '../store/terminalStore';
 
@@ -27,6 +28,7 @@ export const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
   useClickOutside(modalRef, onClose, isOpen);
 
   const { appearance, keyboard, updateAppearance } = useSettingsStore();
+  const { isModelLoaded, isProcessing, realLlmStatus } = useAIStore();
   const clearHistory = useTerminalStore(state => state.clearHistory);
 
   const refreshHistoryStatus = useCallback(async () => {
@@ -84,16 +86,16 @@ export const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
   ];
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 backdrop-blur-sm sm:p-6">
       <div 
         ref={modalRef}
-        className="bg-terminal-surface border border-terminal-border rounded-xl shadow-2xl w-full max-w-4xl h-[80vh] max-h-[760px] flex overflow-hidden"
+        className="flex max-h-[calc(100vh-1.5rem)] min-h-0 w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-terminal-border bg-terminal-surface shadow-2xl sm:h-[80vh] sm:max-h-[760px] sm:flex-row"
         role="dialog"
         aria-modal="true"
         aria-labelledby="settings-title"
       >
         {/* Sidebar */}
-        <div className="w-64 border-r border-terminal-border">
+        <div className="w-full shrink-0 border-b border-terminal-border sm:w-56 sm:border-b-0 sm:border-r md:w-64">
           <div className="p-4 border-b border-terminal-border">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-2">
@@ -111,7 +113,7 @@ export const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
             </div>
           </div>
           
-          <div className="p-2" role="tablist" aria-label="Settings sections">
+          <div className="flex gap-1 overflow-x-auto p-2 sm:block" role="tablist" aria-label="Settings sections">
             {tabs.map((tab) => {
               const Icon = tab.icon;
               return (
@@ -121,7 +123,7 @@ export const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                   aria-selected={activeTab === tab.id}
                   key={tab.id}
                   onClick={() => setActiveTab(tab.id)}
-                  className={`w-full flex items-center space-x-3 p-3 rounded-lg transition-colors text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-ai-primary ${
+                  className={`flex min-w-fit flex-1 items-center justify-center space-x-2 rounded-lg p-2.5 text-left transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-ai-primary sm:mb-1 sm:w-full sm:justify-start sm:space-x-3 sm:p-3 ${
                     activeTab === tab.id
                       ? 'bg-ai-primary text-white'
                       : 'text-terminal-text hover:bg-terminal-border'
@@ -136,7 +138,7 @@ export const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
         </div>
 
         {/* Content */}
-        <div className="flex-1 p-6 overflow-y-auto">
+        <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-4 sm:p-6">
           {activeTab === 'appearance' && (
             <div className="space-y-6">
               <div>
@@ -223,7 +225,7 @@ export const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
               </div>
 
               <section className="rounded-lg border border-terminal-border bg-terminal-bg p-4" aria-labelledby="history-protection-title">
-                <div className="flex items-start justify-between gap-4">
+                <div className="flex flex-col items-start gap-4 sm:flex-row sm:justify-between">
                   <div className="flex min-w-0 items-start gap-3">
                     <Database className="mt-0.5 h-5 w-5 flex-none text-ai-primary" />
                     <div>
@@ -250,7 +252,7 @@ export const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
                   )}
                 </div>
 
-                <div className="mt-4 flex items-center justify-between gap-4 border-t border-terminal-border pt-4">
+                <div className="mt-4 flex flex-col items-start gap-4 border-t border-terminal-border pt-4 sm:flex-row sm:items-center sm:justify-between">
                   <p className="text-xs text-terminal-muted">
                     Clear removes completed command records from both searchable and in-memory history.
                   </p>
@@ -269,14 +271,48 @@ export const Settings: React.FC<SettingsProps> = ({ isOpen, onClose }) => {
               <section className="rounded-lg border border-terminal-border bg-terminal-bg p-4" aria-labelledby="local-intelligence-title">
                 <div className="flex items-start gap-3">
                   <ShieldCheck className="mt-0.5 h-5 w-5 flex-none text-ai-primary" />
-                  <div>
+                  <div className="min-w-0">
                     <h4 id="local-intelligence-title" className="font-medium text-terminal-text">
-                      Local intelligence
+                      Authenticated loopback inference
                     </h4>
                     <p className="mt-1 text-sm text-terminal-muted">
-                      The bundled coder model runs through an authenticated loopback-only helper.
-                      Suggestion adaptation is held in memory for the current app session and is not
-                      written to disk. Generated commands are always shown for review before they can run.
+                      The bundled coder model runs in a signed helper that listens only on
+                      <code className="mx-1 rounded bg-terminal-border/60 px-1 py-0.5 font-mono text-xs text-terminal-text">127.0.0.1</code>
+                      using an operating-system-selected ephemeral port. Every launch uses a new random
+                      API key, and pH7Console is the only client. The helper never binds to a LAN or
+                      public interface.
+                    </p>
+                    <p className="mt-2 text-sm text-terminal-muted">
+                      The helper inherits the parent App Sandbox, so the parent requires Incoming
+                      Connections (<code className="break-all font-mono text-xs text-terminal-text">com.apple.security.network.server</code>)
+                      for this on-device inference socket. Removing it prevents the local model from
+                      accepting pH7Console’s loopback requests.
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                      <span
+                        className={`rounded-full border px-2 py-1 ${
+                          realLlmStatus.available
+                            ? 'border-green-400/30 bg-green-400/10 text-green-300'
+                            : isProcessing
+                              ? 'border-amber-400/30 bg-amber-400/10 text-amber-300'
+                              : 'border-sky-400/30 bg-sky-400/10 text-sky-300'
+                        }`}
+                        role="status"
+                      >
+                        {realLlmStatus.available
+                          ? 'On-device model ready'
+                          : isProcessing
+                            ? 'On-device model warming'
+                            : isModelLoaded
+                              ? 'Deterministic fallback ready'
+                              : 'Command planning available'}
+                      </span>
+                      <span className="break-words text-terminal-muted">{realLlmStatus.message}</span>
+                    </div>
+                    <p className="mt-3 text-xs leading-5 text-terminal-muted">
+                      To verify: return to the main window, enter “show the current git branch,” then
+                      choose Create Safe Command Plan. Once warm-up completes, the result is labeled
+                      “On-device model.”
                     </p>
                   </div>
                 </div>

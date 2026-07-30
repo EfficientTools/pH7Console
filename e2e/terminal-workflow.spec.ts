@@ -9,7 +9,8 @@ test.describe('pH7Console desktop shell', () => {
   test('renders the primary desktop regions', async ({ page }) => {
     await expect(page.getByRole('tab', { name: 'Terminals' })).toBeVisible();
     await expect(page.getByRole('tab', { name: 'Explorer' })).toBeVisible();
-    await expect(page.getByText('No active terminal session')).toBeVisible();
+    await expect(page.getByText('Start a terminal session', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: /Start Terminal|Retry Terminal/ })).toBeEnabled();
     await expect(page.getByRole('heading', { name: 'Local Command Intelligence' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Settings' })).toBeVisible();
   });
@@ -42,8 +43,46 @@ test.describe('pH7Console desktop shell', () => {
   });
 
   test('reports unavailable native AI honestly in a browser preview', async ({ page }) => {
-    await expect(page.getByText('Local AI is unavailable')).toBeVisible();
+    await expect(page.getByText('Start a terminal session to create a command plan.')).toBeVisible();
+    await expect(page.getByRole('textbox', { name: 'Describe a command to plan' })).toBeEnabled();
     await expect(page.getByRole('button', { name: 'Retry AI' })).toBeVisible();
     await expect(page.getByText('AI Ready')).toHaveCount(0);
   });
+});
+
+test('keeps controls readable and reachable at the minimum release window size', async ({ page }) => {
+  await page.setViewportSize({ width: 800, height: 600 });
+  await page.goto('/');
+  await expect(page.locator('header').getByText('pH7Console', { exact: true })).toBeVisible();
+
+  await expect(page.getByRole('heading', { name: 'Local Command Intelligence' })).toBeHidden();
+  await expect(page.getByRole('button', { name: 'Show Sidebar (⌘B)' })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Start Terminal|Retry Terminal/ })).toBeEnabled();
+
+  await page.getByRole('button', { name: 'Show Sidebar (⌘B)' }).click();
+  await expect(page.getByRole('button', { name: 'Settings' })).toBeVisible();
+  await page.getByRole('button', { name: 'Settings' }).click();
+
+  const settings = page.getByRole('dialog', { name: 'Settings' });
+  await expect(settings).toBeVisible();
+  await expect
+    .poll(async () => settings.evaluate(element => {
+      const rect = element.getBoundingClientRect();
+      return rect.left >= 0
+        && rect.top >= 0
+        && rect.right <= window.innerWidth
+        && rect.bottom <= window.innerHeight;
+    }))
+    .toBe(true);
+
+  await page.getByRole('tab', { name: 'Privacy' }).click();
+  await expect(page.getByRole('heading', { name: 'Authenticated loopback inference' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close settings' }).click();
+  await page.getByRole('button', { name: 'Close open side panel' }).click();
+
+  await page.getByRole('button', { name: 'Show AI Panel (⌘J)' }).click();
+  await expect(page.getByRole('heading', { name: 'Local Command Intelligence' })).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth))
+    .toBe(true);
 });

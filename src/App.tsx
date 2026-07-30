@@ -25,8 +25,9 @@ const focusTerminal = () => {
 
 function App() {
   const [isLoading, setIsLoading] = useState(true);
-  const [sidebarVisible, setSidebarVisible] = useState(true);
-  const [aiPanelVisible, setAiPanelVisible] = useState(true);
+  const [isCompact, setIsCompact] = useState(() => window.innerWidth < 1024);
+  const [sidebarVisible, setSidebarVisible] = useState(() => window.innerWidth >= 1024);
+  const [aiPanelVisible, setAiPanelVisible] = useState(() => window.innerWidth >= 1024);
   const {
     activeSession,
     closeSession,
@@ -45,6 +46,22 @@ function App() {
     root.style.setProperty('--terminal-font', `${appearance.fontFamily}, ui-monospace, monospace`);
     root.style.setProperty('--terminal-font-size', `${appearance.fontSize}px`);
   }, [appearance.fontFamily, appearance.fontSize]);
+
+  useEffect(() => {
+    let wasCompact = window.innerWidth < 1024;
+    const updateLayout = () => {
+      const compact = window.innerWidth < 1024;
+      setIsCompact(compact);
+      if (compact && !wasCompact) {
+        setSidebarVisible(false);
+        setAiPanelVisible(false);
+        setTimeout(focusTerminal, 0);
+      }
+      wasCompact = compact;
+    };
+    window.addEventListener('resize', updateLayout);
+    return () => window.removeEventListener('resize', updateLayout);
+  }, []);
 
   useEffect(() => {
     const initializeApp = async () => {
@@ -146,6 +163,7 @@ function App() {
         e.preventDefault();
         setSidebarVisible(prev => {
           const newValue = !prev;
+          if (newValue && isCompact) setAiPanelVisible(false);
           setTimeout(focusTerminal, 350);
           return newValue;
         });
@@ -155,6 +173,7 @@ function App() {
         e.preventDefault();
         setAiPanelVisible(prev => {
           const newValue = !prev;
+          if (newValue && isCompact) setSidebarVisible(false);
           setTimeout(focusTerminal, 350);
           return newValue;
         });
@@ -179,7 +198,7 @@ function App() {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [activeSession, closeSession, createSession, sessions, setActiveSession]);
+  }, [activeSession, closeSession, createSession, isCompact, sessions, setActiveSession]);
 
   if (isLoading) {
     return (
@@ -205,7 +224,9 @@ function App() {
           <button
             type="button"
             onClick={() => {
-              setSidebarVisible(!sidebarVisible);
+              const nextVisible = !sidebarVisible;
+              setSidebarVisible(nextVisible);
+              if (nextVisible && isCompact) setAiPanelVisible(false);
               setTimeout(focusTerminal, 350);
             }}
             className="terminal-toolbar-button"
@@ -246,7 +267,9 @@ function App() {
           <button
             type="button"
             onClick={() => {
-              setAiPanelVisible(!aiPanelVisible);
+              const nextVisible = !aiPanelVisible;
+              setAiPanelVisible(nextVisible);
+              if (nextVisible && isCompact) setSidebarVisible(false);
               setTimeout(focusTerminal, 350);
             }}
             className="terminal-toolbar-button"
@@ -265,25 +288,54 @@ function App() {
       </header>
 
       {/* Main Content Area - Now flex-1 to take remaining height after header */}
-      <div className="flex-1 flex min-h-0">
+      <div className="relative flex min-h-0 flex-1 overflow-hidden">
+        {isCompact && (sidebarVisible || aiPanelVisible) && (
+          <button
+            type="button"
+            className="absolute inset-0 z-20 cursor-default bg-black/45 backdrop-blur-[1px]"
+            onClick={() => {
+              setSidebarVisible(false);
+              setAiPanelVisible(false);
+              setTimeout(focusTerminal, 0);
+            }}
+            aria-label="Close open side panel"
+          />
+        )}
+
         {/* Sidebar with transition */}
-        <div id="ph7-sidebar" className={`h-full transition-all duration-300 ease-in-out ${
-          sidebarVisible ? 'w-64 opacity-100' : 'w-0 opacity-0 overflow-hidden'
-        }`} aria-hidden={!sidebarVisible}>
+        <div
+          id="ph7-sidebar"
+          className={`h-full shrink-0 transition-all duration-300 ease-in-out ${
+            sidebarVisible
+              ? isCompact
+                ? 'absolute inset-y-0 left-0 z-30 w-[min(18rem,92vw)] opacity-100 shadow-2xl'
+                : 'relative w-64 opacity-100'
+              : 'relative w-0 overflow-hidden opacity-0'
+          }`}
+          aria-hidden={!sidebarVisible}
+        >
           {sidebarVisible && <Sidebar />}
         </div>
         
         {/* Terminal and AI Panel */}
-        <div className="flex-1 flex min-h-0">
+        <div className="relative flex min-h-0 min-w-0 flex-1">
           {/* Terminal */}
-          <div className="flex-1 min-h-0">
+          <div className="min-h-0 min-w-0 flex-1">
             <Terminal />
           </div>
           
           {/* AI Panel with transition */}
-          <div id="ph7-ai-panel" className={`h-full transition-all duration-300 ease-in-out border-l border-terminal-border ${
-            aiPanelVisible ? 'w-80 opacity-100' : 'w-0 opacity-0 overflow-hidden border-l-0'
-          }`} aria-hidden={!aiPanelVisible}>
+          <div
+            id="ph7-ai-panel"
+            className={`h-full shrink-0 border-l border-terminal-border transition-all duration-300 ease-in-out ${
+              aiPanelVisible
+                ? isCompact
+                  ? 'absolute inset-y-0 right-0 z-30 w-[min(22rem,92vw)] bg-terminal-surface opacity-100 shadow-2xl'
+                  : 'relative w-80 opacity-100'
+                : 'relative w-0 overflow-hidden border-l-0 opacity-0'
+            }`}
+            aria-hidden={!aiPanelVisible}
+          >
             {aiPanelVisible && (
               <Suspense
                 fallback={(
