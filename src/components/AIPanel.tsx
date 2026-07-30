@@ -408,24 +408,24 @@ export const AIPanel: React.FC = () => {
   };
 
   return (
-    <div className="h-full bg-terminal-surface flex flex-col min-h-0">
+    <div className="flex h-full min-h-0 min-w-0 flex-col bg-terminal-surface">
       {/* Header */}
       <div className="p-4 border-b border-terminal-border flex-shrink-0">
-        <div className="flex items-center space-x-2">
-          <Brain className="w-5 h-5 text-ai-primary" />
-          <h2 className="font-semibold text-terminal-text">Local Command Intelligence</h2>
-          {isModelLoaded && (
-            <span
-              className={`ml-auto h-2 w-2 rounded-full ${
-                realLlmStatus.available
-                  ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.55)]'
-                  : 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.4)]'
-              }`}
-              aria-label={realLlmStatus.available ? 'On-device language model ready' : 'Deterministic local intelligence ready'}
-              title={realLlmStatus.message}
-              role="status"
-            />
-          )}
+        <div className="flex min-w-0 items-center gap-2">
+          <Brain className="h-5 w-5 flex-none text-ai-primary" />
+          <h2 className="min-w-0 break-words font-semibold leading-5 text-terminal-text">Local Command Intelligence</h2>
+          <span
+            className={`ml-auto h-2 w-2 flex-none rounded-full ${
+              realLlmStatus.available
+                ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.55)]'
+                : isProcessing
+                  ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.4)]'
+                  : 'bg-sky-400 shadow-[0_0_8px_rgba(56,189,248,0.4)]'
+            }`}
+            aria-label={realLlmStatus.available ? 'On-device language model ready' : 'Deterministic local intelligence ready'}
+            title={realLlmStatus.message}
+            role="status"
+          />
         </div>
         
         {/* Feedback Message */}
@@ -451,7 +451,6 @@ export const AIPanel: React.FC = () => {
               placeholder="Try: 'show me all large files', 'find files modified today', 'what's using the most memory', 'install node dependencies', 'check git status', 'list running processes on port 3000'"
               className="w-full bg-terminal-bg border border-terminal-border rounded-md px-3 py-2 text-sm text-terminal-text resize-none focus-ring"
               rows={3}
-              disabled={!isModelLoaded}
               aria-label="Describe a command to plan"
             />
 
@@ -464,8 +463,7 @@ export const AIPanel: React.FC = () => {
                 type="button"
                 onClick={() => void handleVoiceInput()}
                 disabled={
-                  !isModelLoaded
-                  || voiceState.phase === 'checking'
+                  voiceState.phase === 'checking'
                   || voiceState.phase === 'requesting'
                   || voiceState.phase === 'processing'
                   || voiceState.phase === 'denied'
@@ -495,7 +493,8 @@ export const AIPanel: React.FC = () => {
               <button
                 type="button"
                 onClick={handleNaturalLanguageSubmit}
-                disabled={!isModelLoaded || !naturalLanguageInput.trim() || isProcessing || isPlanning || quickActionLoading !== null}
+                disabled={!activeSession || !naturalLanguageInput.trim() || isPlanning || quickActionLoading !== null}
+                title={activeSession ? 'Create a reviewable local command plan' : 'Start a terminal session first'}
                 className="min-w-0 flex-1 bg-ai-primary hover:bg-ai-primary/80 disabled:opacity-50 disabled:cursor-not-allowed text-white px-3 py-2 rounded-md text-sm font-medium transition-colors focus-ring"
               >
                 {isPlanning ? 'Planning...' : 'Create Safe Command Plan'}
@@ -537,11 +536,21 @@ export const AIPanel: React.FC = () => {
             )}
           </div>
 
-          {!isModelLoaded ? (
-            <div className="text-center py-8">
-              <AlertCircle className="w-8 h-8 mx-auto text-terminal-muted mb-2" />
+          {suggestions.length === 0 ? (
+            <div className="py-8 text-center">
+              {modelError && !isProcessing ? (
+                <AlertCircle className="mx-auto mb-2 h-8 w-8 text-amber-300" />
+              ) : (
+                <Zap className="mx-auto mb-2 h-8 w-8 text-terminal-muted opacity-50" />
+              )}
               <p className="text-sm text-terminal-muted">
-                {isProcessing ? 'AI model loading...' : 'Local AI is unavailable'}
+                {!activeSession
+                  ? 'Start a terminal session to create a command plan.'
+                  : isProcessing
+                    ? 'Command planning is ready while the on-device model warms.'
+                    : modelError
+                      ? 'Deterministic command planning remains available.'
+                      : 'Describe a task above or use a quick action on this tab’s last command.'}
               </p>
               {modelError && !isProcessing && (
                 <button
@@ -552,13 +561,6 @@ export const AIPanel: React.FC = () => {
                   Retry AI
                 </button>
               )}
-            </div>
-          ) : suggestions.length === 0 ? (
-            <div className="text-center py-8">
-              <Zap className="w-8 h-8 mx-auto text-terminal-muted mb-2 opacity-50" />
-              <p className="text-sm text-terminal-muted">
-                Describe a task above or use a quick action on this tab's last command.
-              </p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -702,7 +704,7 @@ export const AIPanel: React.FC = () => {
             <button 
               type="button"
               onClick={() => handleQuickAction('explain')}
-              disabled={!isModelLoaded || !lastActiveCommand || isProcessing || isPlanning || quickActionLoading !== null}
+              disabled={!lastActiveCommand || isPlanning || quickActionLoading !== null}
               className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {quickActionLoading === 'explain' ? 'Explaining...' : 'Explain Last'}
@@ -711,7 +713,7 @@ export const AIPanel: React.FC = () => {
             <button 
               type="button"
               onClick={() => handleQuickAction('fix')}
-              disabled={!isModelLoaded || !lastActiveCommand || lastActiveCommand.exit_code == null || lastActiveCommand.exit_code === 0 || isProcessing || isPlanning || quickActionLoading !== null}
+              disabled={!lastActiveCommand || lastActiveCommand.exit_code == null || lastActiveCommand.exit_code === 0 || isPlanning || quickActionLoading !== null}
               title={lastActiveCommand?.exit_code ? 'Create a conservative plan for the last failed command' : 'The last command did not fail'}
               className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
             >
@@ -721,7 +723,7 @@ export const AIPanel: React.FC = () => {
             <button 
               type="button"
               onClick={() => handleQuickAction('optimize')}
-              disabled={!isModelLoaded || !lastActiveCommand || isProcessing || isPlanning || quickActionLoading !== null}
+              disabled={!lastActiveCommand || isPlanning || quickActionLoading !== null}
               className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {quickActionLoading === 'optimize' ? 'Optimizing...' : 'Optimize'}
@@ -730,7 +732,7 @@ export const AIPanel: React.FC = () => {
             <button 
               type="button"
               onClick={() => handleQuickAction('analyze')}
-              disabled={!isModelLoaded || !lastActiveCommand?.output.trim() || isProcessing || isPlanning || quickActionLoading !== null}
+              disabled={!lastActiveCommand?.output.trim() || isPlanning || quickActionLoading !== null}
               title={lastActiveCommand?.output.trim() ? 'Analyze captured output' : 'No command output was captured for this history entry'}
               className="px-3 py-2 bg-terminal-bg hover:bg-terminal-border text-xs text-terminal-text rounded border border-terminal-border transition-colors focus-ring disabled:opacity-50 disabled:cursor-not-allowed"
             >

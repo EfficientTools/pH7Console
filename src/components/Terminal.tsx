@@ -569,10 +569,12 @@ export const Terminal: React.FC = () => {
     activeSession,
     clearHistory,
     commandHistory,
+    createSession,
     recordCommandExecution,
     restartSession,
     selectWorkspace,
     sessions,
+    terminalError,
     updateSessionWorkingDirectory,
   } = useTerminalStore();
   const { appearance } = useSettingsStore();
@@ -666,9 +668,24 @@ export const Terminal: React.FC = () => {
   if (!activeSession || !activeSessionData) {
     return (
       <div className="h-full flex items-center justify-center text-terminal-muted" data-testid="terminal">
-        <div className="text-center">
-          <p className="text-sm">No active terminal session</p>
-          <p className="mt-1 text-xs">Create a tab from the sidebar to start a shell.</p>
+        <div className="max-w-md px-6 text-center">
+          <p className="text-base font-medium text-terminal-text">Start a terminal session</p>
+          <p className="mt-2 text-sm">
+            Open a private persistent shell now. You can choose a project workspace after it starts.
+          </p>
+          {terminalError && (
+            <p className="mt-3 rounded-md border border-red-400/30 bg-red-500/10 px-3 py-2 text-left text-xs leading-5 text-red-200" role="alert">
+              {terminalError}
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => void createSession('Main Terminal')}
+            className="mt-4 rounded-md bg-ai-primary px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-ai-primary/80 focus-ring"
+          >
+            {terminalError ? 'Retry Terminal' : 'Start Terminal'}
+          </button>
+          <p className="mt-3 text-xs">Keyboard shortcut: ⌘T</p>
         </div>
       </div>
     );

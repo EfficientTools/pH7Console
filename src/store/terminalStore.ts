@@ -29,6 +29,7 @@ interface TerminalState {
   isExecuting: boolean;
   isInitialized: boolean;
   isInitializing: boolean;
+  terminalError: string | null;
 
   // Actions
   createSession: (title?: string) => Promise<string | null>;
@@ -55,6 +56,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   isExecuting: false,
   isInitialized: false,
   isInitializing: false,
+  terminalError: null,
 
   createSession: async (title?: string) => {
     try {
@@ -71,11 +73,16 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       set(state => ({
         sessions: [...state.sessions, newSession],
         activeSession: sessionId,
+        terminalError: null,
       }));
 
       return sessionId;
     } catch (error) {
       console.error('Failed to create terminal session:', error);
+      const detail = error instanceof Error ? error.message : String(error);
+      set({
+        terminalError: `The shell could not start. ${detail}`,
+      });
       return null;
     }
   },
@@ -97,6 +104,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       return replacement.id;
     } catch (error) {
       console.error('Failed to restart terminal session:', error);
+      const detail = error instanceof Error ? error.message : String(error);
+      set({
+        terminalError: `The shell could not restart. ${detail}`,
+      });
       return null;
     }
   },
@@ -242,7 +253,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     // Claim initialization synchronously before the first await. React's
     // development StrictMode intentionally replays effects; without this
     // guard both invocations could create a native PTY and duplicate the tab.
-    set({ isInitializing: true });
+    set({ isInitializing: true, terminalError: null });
 
     console.log('📝 Initializing terminal sessions...');
 

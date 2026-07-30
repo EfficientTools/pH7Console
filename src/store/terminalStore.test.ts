@@ -19,6 +19,7 @@ describe('terminal session recovery', () => {
     useTerminalStore.setState({
       activeSession: previous.id,
       sessions: [previous],
+      terminalError: null,
     });
   });
 
@@ -48,6 +49,23 @@ describe('terminal session recovery', () => {
 
     expect(useTerminalStore.getState().sessions).toEqual([previous]);
     expect(useTerminalStore.getState().activeSession).toBe(previous.id);
+    expect(useTerminalStore.getState().terminalError).toContain('shell unavailable');
+  });
+
+  it('makes a failed first shell actionable without hiding the terminal surface', async () => {
+    useTerminalStore.setState({
+      activeSession: null,
+      sessions: [],
+      terminalError: null,
+    });
+    vi.mocked(invoke).mockRejectedValueOnce(new Error('sandbox denied the PTY'));
+
+    await expect(useTerminalStore.getState().createSession('Main Terminal')).resolves.toBeNull();
+
+    expect(useTerminalStore.getState().sessions).toEqual([]);
+    expect(useTerminalStore.getState().terminalError).toBe(
+      'The shell could not start. sandbox denied the PTY',
+    );
   });
 });
 
