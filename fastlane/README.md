@@ -127,6 +127,14 @@ Upload the public privacy-policy URL after it is published
 
 Set pH7Console to a permanent Free price in every App Store territory
 
+### mac withdraw_from_review
+
+```sh
+[bundle exec] fastlane mac withdraw_from_review
+```
+
+Withdraw a waiting macOS submission so locked listing assets can be updated
+
 ### mac submit_for_review
 
 ```sh
