@@ -103,6 +103,14 @@ Upload the age-rating declaration without requiring review-contact metadata
 
 Upload App Review contact and notes after a phone number is supplied
 
+### mac upload_review_notes
+
+```sh
+[bundle exec] fastlane mac upload_review_notes
+```
+
+Upload App Review notes while preserving the existing reviewer contact
+
 ### mac upload_privacy_policy_url
 
 ```sh

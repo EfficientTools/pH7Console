@@ -84,6 +84,8 @@ npm run tauri:upload:appstore
 - Complete export compliance consistently with `ITSAppUsesNonExemptEncryption=false`. Reassess this answer if cryptography is added to the app itself.
 - Verify the permanent Free price and territories with `fastlane mac set_free_pricing`.
 - Upload the prepared App Review contact and notes with `APP_REVIEW_PHONE=+... fastlane mac upload_review_information`.
+- When reviewer contact information already exists, update notes without replacing it using `fastlane mac upload_review_notes`.
+- The `com.apple.security.network.server` entitlement is required by the signed, sandbox-inheriting `llama-server` helper. It listens only on authenticated `127.0.0.1` with an ephemeral port for on-device inference. Keep this exact justification and the reviewer verification steps in App Review Notes; removing the entitlement breaks local AI because a directly launched helper inherits the parent app's sandbox capabilities.
 - After voice-input QA, re-run `fastlane mac audit_submission_readiness`, confirm build 4 is selected, and submit version 1.0.0 for review.
 
 ## Version 1.0.0 status

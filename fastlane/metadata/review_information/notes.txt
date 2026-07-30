@@ -1,3 +1,16 @@
+NETWORK SERVER ENTITLEMENT — REQUIRED FOR ON-DEVICE LOCAL AI
+
+pH7Console intentionally includes com.apple.security.network.server solely for its bundled on-device language-model runtime. During local-AI initialization, the main app launches the signed, sandbox-inheriting `llama-server` helper. That helper listens only on 127.0.0.1, uses an operating-system-selected ephemeral port, and requires a new random API key for every launch. The main pH7Console process is its only client.
+
+The listener is never bound to 0.0.0.0, ::, a LAN address, or a public interface. It does not accept connections from other devices, advertise a service, or provide web/FTP/file-sharing functionality. No prompt or terminal data leaves the Mac. Because the command-line helper inherits the parent App Sandbox, the parent must include the server entitlement for this loopback listener to function.
+
+To verify the functionality:
+1. Launch pH7Console and select any disposable folder with “Open Workspace.”
+2. If the right-side panel is hidden, press Command-J to show “Local Command Intelligence.”
+3. Enter “show the current git branch” under “Describe What You Want.”
+4. Press “Create Safe Command Plan.” The request is processed by the bundled loopback helper and the result is labeled “On-device model” after warm-up.
+5. Open Settings → Privacy and review “Local intelligence,” which identifies the authenticated loopback-only helper.
+
 pH7Console does not require an account, demo user, subscription, external hardware, or network connection.
 
 To review workspace features:
