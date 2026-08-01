@@ -25,6 +25,7 @@ NLOHMANN_JSON_LICENSE_INPUT="$TAURI_DIR/resources/models/LICENSE-NLOHMANN-JSON"
 CLI_INPUT="$ROOT_DIR/scripts/ph7"
 OUTPUT_DIR="$ROOT_DIR/dist/app-store"
 PKG_PATH="$OUTPUT_DIR/pH7Console.pkg"
+APPLE_TIMESTAMP_URL="http://timestamp.apple.com/ts01"
 
 fail() {
   echo "$*" >&2
@@ -529,14 +530,14 @@ codesign --force \
   --sign "$APPLE_SIGNING_IDENTITY" \
   --identifier "$HELPER_IDENTIFIER" \
   --options runtime \
-  --timestamp \
+  --timestamp="$APPLE_TIMESTAMP_URL" \
   --generate-entitlement-der \
   --entitlements "$HELPER_ENTITLEMENTS" \
   "$HELPER_EXECUTABLE"
 codesign --force \
   --sign "$APPLE_SIGNING_IDENTITY" \
   --options runtime \
-  --timestamp \
+  --timestamp="$APPLE_TIMESTAMP_URL" \
   --generate-entitlement-der \
   --entitlements "$ENTITLEMENTS" \
   "$APP_PATH"
