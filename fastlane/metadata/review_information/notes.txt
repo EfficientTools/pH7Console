@@ -1,33 +1,35 @@
-RESUBMISSION FIXES — GUIDELINES 2.1(a) AND 4
+RESUBMISSION FIX — GUIDELINE 4 WINDOW RECOVERY
 
-Build 5 replaces rejected build 4. We corrected the signed app and now verify the exact app extracted from the final installer before upload, including its deep signature, entitlements, executable hashes, bundled-model hash, and build number.
+Build 6 replaces rejected build 5.
 
-First-launch recovery is now explicit: if a PTY cannot start, the center view shows the native error and an enabled “Retry Terminal” button. Command planning remains available through the deterministic on-device engine while the bundled model warms or if warm-up fails. The model no longer gates core controls.
+pH7Console now has a native macOS Window menu that lists “pH7Console.” Closing the main window with its red close control hides and retains the window instead of destroying the user's live terminal workspace. Choose Window → pH7Console to restore, unminimize, and focus it. Clicking the pH7Console Dock icon when no window is visible provides the same recovery. Command-Q remains the explicit way to quit the app.
 
-At the minimum supported 800 × 600 window size, the sidebar and Local Command Intelligence panel open as overlays instead of compressing the terminal. Settings, History, workspace context, status text, and actions now wrap or scroll inside the visible window.
+To verify:
+1. Launch pH7Console.
+2. Close the main window with the red window control.
+3. Confirm pH7Console remains available in the macOS menu bar.
+4. Choose Window → pH7Console and confirm the original terminal workspace reappears.
+5. Close it again, click the pH7Console Dock icon, and confirm it reappears.
+6. Choose pH7Console → Quit pH7Console or press Command-Q to exit.
+
+PREVIOUS REVIEW FIXES RETAINED
+
+Core controls remain enabled while the bundled model warms or if it fails. If a PTY cannot start, the center view shows the native error and an enabled “Retry Terminal” button. At the minimum 800 × 600 window size, side panels use overlays; Settings, History, context, status text, and actions remain readable, scrollable, and reachable.
 
 NETWORK SERVER ENTITLEMENT — REQUIRED FOR ON-DEVICE LOCAL AI
 
-pH7Console intentionally includes com.apple.security.network.server only for its bundled on-device language-model runtime. The main app launches the signed `llama-server` command-line helper. It listens only on 127.0.0.1, uses an OS-selected ephemeral port, and requires a new random API key on every launch. The main pH7Console process is its only client.
+pH7Console intentionally includes com.apple.security.network.server only for its bundled on-device language-model runtime. The main app launches the signed `llama-server` helper, which listens only on 127.0.0.1 on an OS-selected ephemeral port and requires a new random API key on every launch. The pH7Console process is its only client.
 
-The helper never binds to 0.0.0.0, ::, a LAN address, or a public interface. It does not advertise a service or provide web, FTP, or file sharing. No prompt or terminal data leaves the Mac. Apple requires a sandbox-inheriting child process to contain only com.apple.security.app-sandbox and com.apple.security.inherit; therefore, the parent must include the server entitlement for this loopback listener to accept the app’s local inference requests.
+The helper never binds to 0.0.0.0, ::, a LAN address, or a public interface. It does not advertise a service or provide web, FTP, or file sharing. No prompt or terminal data leaves the Mac. The sandbox-inheriting helper contains only com.apple.security.app-sandbox and com.apple.security.inherit; the parent therefore needs the server entitlement for this local listener.
 
-To verify:
-1. Launch pH7Console and select any disposable folder with “Open Workspace.”
-2. Press Command-J if needed to show “Local Command Intelligence.”
-3. Enter “show the current git branch,” then choose “Create Safe Command Plan.”
-4. After warm-up, the local result is labeled “On-device model.”
-5. Press Command-B if needed, then open Settings → Privacy → “Authenticated loopback inference.” This shows runtime status and explains the inherited server entitlement.
+To verify local inference:
+1. Choose “Open Workspace” and select a disposable folder.
+2. Press Command-J if needed, enter “show the current git branch,” and choose “Create Safe Command Plan.”
+3. The result is labeled “On-device model.” Nothing runs until the reviewer inserts it and explicitly presses Enter.
+4. Press Command-B if needed, then open Settings → Privacy → “Authenticated loopback inference” for live status and the entitlement explanation.
 
-No account, demo user, subscription, external hardware, or Internet connection is required.
+No account, demo user, subscription, external hardware, or Internet connection is required. The app has no telemetry, ads, cloud AI, or cloud account. Its Qwen2.5-Coder model and llama.cpp helper are bundled and run locally.
 
-To review terminal and voice features:
-1. Choose “Open Workspace” and select a disposable folder with the macOS picker.
-2. Enter a shell command in the center terminal, or describe a task in the assistant panel.
-3. For optional voice input, choose “Voice,” grant Microphone and Speech Recognition access, speak, then choose “Stop.” The transcript stays editable; nothing runs until the reviewer creates a plan, inserts it, and explicitly presses Enter.
+Optional voice input uses Apple's Speech framework with on-device recognition required, no cloud fallback, a 30-second maximum, and no audio storage. The transcript remains editable and never executes automatically.
 
-The Mac App Store build is sandboxed. Shell commands operate within macOS permissions and the reviewer-selected workspace. The app has no telemetry, ads, cloud AI, or cloud account. The bundled Qwen2.5-Coder GGUF model and signed llama.cpp helper run locally. Deterministic planning and the terminal remain interactive during model warm-up.
-
-Voice uses Apple’s Speech framework with on-device recognition required, no cloud fallback, a 30-second maximum, and no audio storage.
-
-Searchable history stores heuristically redacted command text and execution metadata in a SQLCipher-encrypted database in the app container. Its random key is a device-only, non-synchronizing Keychain item. Command output is not persisted by default. “Clear all” removes history and in-memory adaptation. Authentication failure visibly falls back to memory-only history without plaintext database writes.
+Searchable command history is heuristically redacted and stored in a SQLCipher-encrypted database in the app container. Its random key is a device-only, non-synchronizing Keychain item. Command output is not persisted by default. “Clear all” removes history and in-memory adaptation. Authentication failure falls back visibly to memory-only history without plaintext database writes.

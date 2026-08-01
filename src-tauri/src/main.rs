@@ -4,6 +4,8 @@
 mod ai;
 mod commands;
 mod history;
+#[cfg(target_os = "macos")]
+mod macos_windowing;
 mod models;
 mod shell_integration;
 mod terminal;
@@ -26,9 +28,17 @@ pub struct AppState {
 }
 
 fn main() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_deep_link::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .menu(macos_windowing::build_menu)
+        .on_menu_event(macos_windowing::handle_menu_event)
+        .on_window_event(macos_windowing::handle_window_event);
+
+    let app = builder
         .setup(|app| {
             voice::initialize(app.handle().clone());
             let app_data_directory = app.path().app_data_dir()?;
@@ -201,6 +211,11 @@ fn main() {
             commands::start_voice_input,
             commands::stop_voice_input,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        #[cfg(target_os = "macos")]
+        macos_windowing::handle_run_event(app_handle, &event);
+    });
 }
