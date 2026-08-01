@@ -295,11 +295,16 @@ impl PtySession {
         if !self.is_running() {
             return Ok(());
         }
-        self.killer
+        let result = self
+            .killer
             .lock()
             .map_err(|_| "Terminal process lock is unavailable".to_string())?
-            .kill()
-            .map_err(|error| error.to_string())
+            .kill();
+        match result {
+            Ok(()) => Ok(()),
+            Err(error) if process_already_exited(&error) => Ok(()),
+            Err(error) => Err(error.to_string()),
+        }
     }
 
     pub fn is_running(&self) -> bool {
@@ -327,6 +332,19 @@ impl PtySession {
         subscribers.retain(|(id, _)| *id != subscriber_id);
         Ok(())
     }
+}
+
+fn process_already_exited(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::NotFound {
+        return true;
+    }
+
+    #[cfg(unix)]
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        return true;
+    }
+
+    false
 }
 
 impl Drop for PtySession {
@@ -363,7 +381,7 @@ fn stream_frame(sequence: u64, bytes: &[u8]) -> Vec<u8> {
 
 #[cfg(test)]
 mod tests {
-    use super::OutputBuffer;
+    use super::{process_already_exited, OutputBuffer};
 
     #[test]
     fn scrollback_is_byte_bounded() {
@@ -383,5 +401,19 @@ mod tests {
 
         let (snapshot, _) = buffer.snapshot();
         assert_eq!(snapshot, b"efgh");
+    }
+
+    #[test]
+    fn missing_process_is_already_terminated() {
+        let missing = std::io::Error::from_raw_os_error(
+            #[cfg(unix)]
+            libc::ESRCH,
+            #[cfg(windows)]
+            3,
+        );
+        assert!(process_already_exited(&missing));
+
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert!(!process_already_exited(&denied));
     }
 }
